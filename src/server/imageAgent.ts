@@ -14,6 +14,7 @@ export type ImageAgentEvaluation = {
   score: number;
   rationale: string;
   improvedPrompt: string;
+  promptFallbackUsed: boolean;
 };
 
 export const imageAgentSystemInstruction =
@@ -134,6 +135,19 @@ function normalizeParsedEvaluation(
   fallbackPrompt: string
 ): Partial<ImageAgentEvaluation> | null {
   if (!parsed) return null;
+  const improvedPrompt = stringByAlias(parsed, [
+    "improvedPrompt",
+    "improved_prompt",
+    "improvedImagePrompt",
+    "improved_image_prompt",
+    "nextPrompt",
+    "next_prompt",
+    "rewrittenPrompt",
+    "rewritten_prompt",
+    "optimizedPrompt",
+    "optimized_prompt",
+    "prompt"
+  ]);
 
   return {
     score: numberByAlias(parsed, [
@@ -159,20 +173,8 @@ function normalizeParsedEvaluation(
       "begr\u00fcndung",
       "bewertung"
     ]),
-    improvedPrompt:
-      stringByAlias(parsed, [
-        "improvedPrompt",
-        "improved_prompt",
-        "improvedImagePrompt",
-        "improved_image_prompt",
-        "nextPrompt",
-        "next_prompt",
-        "rewrittenPrompt",
-        "rewritten_prompt",
-        "optimizedPrompt",
-        "optimized_prompt",
-        "prompt"
-      ]) || fallbackPrompt
+    improvedPrompt: improvedPrompt || fallbackPrompt,
+    promptFallbackUsed: !improvedPrompt
   };
 }
 
@@ -193,7 +195,8 @@ function parseLooseEvaluation(raw: string, fallbackPrompt: string): Partial<Imag
   return {
     score,
     rationale: (rationaleMatch?.[1] ?? "Bewertung wurde aus einer nicht strikt formatierten Agent-Antwort gelesen.").trim(),
-    improvedPrompt: (improvedPromptMatch?.[1] ?? fallbackPrompt).trim()
+    improvedPrompt: (improvedPromptMatch?.[1] ?? fallbackPrompt).trim(),
+    promptFallbackUsed: !improvedPromptMatch
   };
 }
 
@@ -204,7 +207,8 @@ function fallbackEvaluation(fallbackPrompt: string, raw: string): ImageAgentEval
     rationale: rawExcerpt
       ? `Die Agent-Bewertung war nicht strukturiert lesbar. Rohantwort: ${rawExcerpt}`
       : "Die Agent-Bewertung war leer oder nicht lesbar. Der aktuelle Prompt wird als Fallback verwendet.",
-    improvedPrompt: fallbackPrompt
+    improvedPrompt: fallbackPrompt,
+    promptFallbackUsed: true
   };
 }
 
@@ -230,7 +234,9 @@ function parseEvaluation(raw: string, fallbackPrompt: string): ImageAgentEvaluat
     return fallbackEvaluation(fallbackPrompt, raw);
   }
 
-  const improvedPrompt = String(parsed.improvedPrompt ?? fallbackPrompt).trim() || fallbackPrompt;
+  const parsedImprovedPrompt = String(parsed.improvedPrompt ?? "").trim();
+  const promptFallbackUsed = Boolean(parsed.promptFallbackUsed) || !parsedImprovedPrompt;
+  const improvedPrompt = parsedImprovedPrompt || fallbackPrompt;
   const rationale =
     String(parsed.rationale ?? "").trim() ||
     "Die Agent-Bewertung war unvollst\u00e4ndig. Der aktuelle Prompt wird als Fallback verwendet.";
@@ -238,7 +244,8 @@ function parseEvaluation(raw: string, fallbackPrompt: string): ImageAgentEvaluat
   return {
     score: clampScore(Number(parsed.score)),
     rationale: rationale.slice(0, 700),
-    improvedPrompt: improvedPrompt.slice(0, 4000)
+    improvedPrompt: improvedPrompt.slice(0, 4000),
+    promptFallbackUsed
   };
 }
 
@@ -259,7 +266,7 @@ function buildEvaluationInput(input: {
     input.currentPrompt,
     "",
     "Task:",
-    "Score the image from 0 to 10. A 10 means the image is production-ready, faithful to the user's intent, visually coherent, and needs no prompt change. If score is below 10, return one complete improved positive prompt for the next 1080p test render. If further improvement is not likely, return the same prompt. Return JSON when possible. If JSON is impossible, write plain fields: Score:, Rationale:, improvedPrompt:."
+    "Score the image from 0 to 10. A 10 means the image is production-ready, faithful to the user's intent, visually coherent, and needs no prompt change. Always return a complete improvedPrompt field. If score is below 10, improvedPrompt must be one complete positive prompt for the next 1080p test render and should differ from the prompt used whenever any concrete visual improvement is possible. Return the same prompt only when no specific prompt change is likely to improve the next render, and explain that in the rationale. Return JSON when possible. If JSON is impossible, write plain fields: Score:, Rationale:, improvedPrompt:."
   ].join("\n");
 }
 

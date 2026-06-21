@@ -436,13 +436,31 @@ app.post(
           }
 
           const nextPrompt = evaluation.improvedPrompt.trim();
-          if (!nextPrompt || nextPrompt === currentPrompt.trim()) {
-            stoppedReason = "no_prompt_change";
+          if (evaluation.promptFallbackUsed && evaluation.score < 9) {
+            stoppedReason = "evaluation_missing_prompt";
             appendAgentRunEvent(run.id, {
               level: "warning",
               attempt,
               score: evaluation.score,
-              message: "Der Agent sieht keine sinnvolle Prompt-Änderung mehr. Finaler Render startet mit dem besten Prompt."
+              message:
+                "Die Agent-Bewertung enthielt keinen auswertbaren verbesserten Prompt. Agent bricht vor dem Finalrender ab, damit keine weiteren Credits fuer einen Blindflug verbraucht werden."
+            });
+            throw new AppError(
+              502,
+              "image_agent_missing_improved_prompt",
+              "Der Agent konnte aus der Bewertung keinen verbesserten Prompt lesen. Bitte starte den Agent-Run erneut."
+            );
+          }
+
+          if (!nextPrompt || nextPrompt === currentPrompt.trim()) {
+            stoppedReason = evaluation.promptFallbackUsed ? "evaluation_missing_prompt_high_score" : "no_prompt_change";
+            appendAgentRunEvent(run.id, {
+              level: "warning",
+              attempt,
+              score: evaluation.score,
+              message: evaluation.promptFallbackUsed
+                ? "Die Agent-Bewertung lieferte keinen auswertbaren neuen Prompt, der Score ist aber hoch genug. Finaler Render startet mit dem besten Prompt."
+                : "Der Agent sieht keine sinnvolle Prompt-Änderung mehr. Finaler Render startet mit dem besten Prompt."
             });
             break;
           }
