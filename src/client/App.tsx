@@ -677,6 +677,7 @@ function Studio({
             <div className="prompt-label-row">
               <label htmlFor="prompt-input">Prompt</label>
             </div>
+            <div className="prompt-improve-title">Prompt Verbesserung (Basic Prompt required)</div>
             <div className="prompt-improve-actions">
               <button
                 className="ghost-button prompt-improve-button"
@@ -756,8 +757,6 @@ function Studio({
             </div>
           </div>
 
-          <SdkSetupPanel config={config} onConfigUpdate={onConfigUpdate} />
-
           <div className={config.upscaler.enabled && config.upscaler.binaryFound ? "upscale-row" : "upscale-row disabled"}>
             <span>
               <Cpu size={18} />
@@ -786,6 +785,8 @@ function Studio({
             {busy ? <Loader2 className="spin" size={19} /> : <Rocket size={19} />}
             {busy ? "Render läuft" : "Bild generieren"}
           </button>
+
+          <SdkSetupPanel config={config} onConfigUpdate={onConfigUpdate} />
         </form>
 
         <section className="preview-stage">
