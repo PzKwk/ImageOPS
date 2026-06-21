@@ -22,6 +22,8 @@ Credit formula:
 ```text
 Test render 1080p = 3 Rob-Token
 Max render 4K = 15 Rob-Token
+Prompt rewrite GPT-5.5 = 1 Rob-Token
+Prompt rewrite GPT-5.5 Pro standard = 5 Rob-Token
 local RTX 8K upscale = +5 Rob-Token
 1080p test plus later 4K max render = 18 Rob-Token total
 4K render plus 8K output = 20 Rob-Token total
@@ -30,7 +32,7 @@ local RTX 8K upscale = +5 Rob-Token
 
 RTX 8K is only available after a 4K Max render. 1080p test renders are too small for the local RTX-up stage, but they can be promoted into a new 4K Max render from the frontend.
 
-Credits are charged at job start. Failed OpenAI renders, failed 4K promotions, and failed local RTX-up runs do not automatically refund credits.
+Credits are charged at job start. Failed OpenAI renders, failed 4K promotions, and failed local RTX-up runs do not automatically refund credits. Failed prompt rewrites are refunded.
 
 OpenAI render background can be selected per job:
 

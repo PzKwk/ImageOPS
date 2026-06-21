@@ -268,6 +268,25 @@ button:disabled {
   line-height: 1.5;
 }
 
+.prompt-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.prompt-label-row label {
+  min-width: 0;
+}
+
+.prompt-improve-button {
+  min-height: 36px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
 .auth-form input:focus,
 .prompt-field textarea:focus,
 .sdk-setup input:focus {

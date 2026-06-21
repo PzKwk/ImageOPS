@@ -78,6 +78,10 @@ export type GenerateResult = {
   warning?: string;
 };
 
+export type ImprovePromptResponse = {
+  improvedPrompt: string;
+};
+
 export type RtxInitResponse = {
   setup: {
     directory: string;

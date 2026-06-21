@@ -16,7 +16,14 @@ import {
 } from "./config.js";
 import { loginUser, registerUser, requireAuth, type AuthenticatedRequest } from "./auth.js";
 import { asyncHandler, errorResponse, AppError } from "./http.js";
+import { assertOpenAIConfigured } from "./openaiClient.js";
 import { generateImage, imageErrorMessage } from "./openaiImage.js";
+import {
+  improvePrompt,
+  maxPromptImproveLength,
+  promptImproveError,
+  resolvePromptImprovePlan
+} from "./openaiPrompt.js";
 import { capturePayPalOrder, createPayPalOrder } from "./paypal.js";
 import { getUpscalerStatus, upscaleToEightK } from "./upscaler.js";
 import { readStore, toPublicUser, updateStore } from "./store.js";
@@ -66,6 +73,13 @@ const imageRequestSchema = z.object({
   background: z.enum(["opaque", "transparent"]).default("opaque")
 });
 
+const promptImproveSchema = z.object({
+  prompt: z.string().trim().min(3).max(maxPromptImproveLength),
+  mode: z.string().trim().max(80).optional(),
+  aspectRatio: z.string().trim().max(40).optional(),
+  textStrictness: z.string().trim().max(80).optional()
+});
+
 function imageSizeToPresetValue(size: string) {
   if (size === "3840 x 2160") return "3840x2160";
   if (size === "2160 x 3840") return "2160x3840";
@@ -86,6 +100,28 @@ function localGeneratedPathFromUrl(url?: string) {
   }
 
   return path.join(config.generatedDir, path.basename(url));
+}
+
+async function chargePromptImprove(userId: string, cost: number) {
+  await updateStore((store) => {
+    const storedUser = store.users.find((item) => item.id === userId);
+    if (!storedUser) {
+      throw new AppError(401, "invalid_token", "Die Sitzung ist ungueltig.");
+    }
+    if (storedUser.credits < cost) {
+      throw new AppError(402, "insufficient_credits", "Nicht genug Rob-Token Credits fuer Prompt verbessern.");
+    }
+    storedUser.credits -= cost;
+  });
+}
+
+async function refundPromptImprove(userId: string, cost: number) {
+  await updateStore((store) => {
+    const storedUser = store.users.find((item) => item.id === userId);
+    if (storedUser) {
+      storedUser.credits += cost;
+    }
+  });
 }
 
 app.get("/api/health", (_req, res) => {
@@ -144,6 +180,37 @@ app.get(
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     );
     res.json({ jobs });
+  })
+);
+
+app.post(
+  "/api/prompts/improve",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const parsed = promptImproveSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new AppError(
+        400,
+        "invalid_prompt_improve_request",
+        "Bitte gib einen Prompt mit 3 bis 4000 Zeichen ein."
+      );
+    }
+
+    assertOpenAIConfigured();
+    const user = (req as AuthenticatedRequest).user;
+    const plan = resolvePromptImprovePlan(parsed.data.mode);
+    await chargePromptImprove(user.id, plan.cost);
+
+    try {
+      const improvedPrompt = await improvePrompt({
+        ...parsed.data,
+        userId: user.id
+      });
+      res.json({ improvedPrompt });
+    } catch (error) {
+      await refundPromptImprove(user.id, plan.cost);
+      throw promptImproveError(error);
+    }
   })
 );
 

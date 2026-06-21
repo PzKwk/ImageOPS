@@ -1,10 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import OpenAI, { toFile } from "openai";
+import { toFile } from "openai";
 import sharp from "sharp";
 import { config } from "./config.js";
 import { AppError } from "./http.js";
 import { createImageArtifact } from "./imageArtifacts.js";
+import { assertOpenAIConfigured, openaiClient } from "./openaiClient.js";
 
 export type ImageReferenceFile = {
   buffer: Buffer;
@@ -20,10 +21,6 @@ type GenerateImageInput = {
   files: ImageReferenceFile[];
 };
 
-const client = new OpenAI({
-  apiKey: config.openaiApiKey || "missing-key"
-});
-
 const imageSizeOverrides: Record<string, { requestSize: string; target: { width: number; height: number } }> = {
   "1920x1080": {
     requestSize: "1920x1088",
@@ -34,16 +31,6 @@ const imageSizeOverrides: Record<string, { requestSize: string; target: { width:
     target: { width: 1080, height: 1920 }
   }
 };
-
-function assertOpenAIConfigured() {
-  if (!config.openaiApiKey) {
-    throw new AppError(
-      503,
-      "openai_not_configured",
-      "OPENAI_API_KEY ist nicht gesetzt. Lege den Key in .env ab."
-    );
-  }
-}
 
 function safeExtension(format: string) {
   if (format === "jpeg") return "jpg";
@@ -91,7 +78,7 @@ export async function generateImage({ prompt, size, jobId, background, files }: 
 
   const response =
     files.length > 0
-      ? await client.images.edit({
+      ? await openaiClient.images.edit({
           ...(request as Record<string, unknown>),
           image: await Promise.all(
             files.map((file) =>
@@ -101,7 +88,7 @@ export async function generateImage({ prompt, size, jobId, background, files }: 
             )
           )
         } as never)
-      : await client.images.generate(request as never);
+      : await openaiClient.images.generate(request as never);
 
   const imageBase64 = response.data?.[0]?.b64_json;
   if (!imageBase64) {

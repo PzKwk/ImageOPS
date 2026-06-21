@@ -29,6 +29,7 @@ import {
   type GenerateResult,
   type ImageJob,
   type ImageSizePreset,
+  type ImprovePromptResponse,
   type RtxInitResponse,
   type TokenPackage,
   type User
@@ -497,6 +498,7 @@ function Studio({
   const [jobs, setJobs] = useState<ImageJob[]>([]);
   const [activeJob, setActiveJob] = useState<ImageJob | null>(null);
   const [busy, setBusy] = useState(false);
+  const [improveBusy, setImproveBusy] = useState(false);
   const [maxRenderBusy, setMaxRenderBusy] = useState(false);
   const [upscaleBusy, setUpscaleBusy] = useState(false);
   const [error, setError] = useState("");
@@ -556,6 +558,35 @@ function Studio({
       setError(requestError instanceof Error ? requestError.message : "Render fehlgeschlagen.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function improveCurrentPrompt() {
+    if (prompt.trim().length < 3) {
+      setError("Bitte gib zuerst einen Prompt ein.");
+      return;
+    }
+
+    setImproveBusy(true);
+    setError("");
+    setWarning("");
+
+    try {
+      const result = await apiPost<ImprovePromptResponse>("/api/prompts/improve", {
+        prompt,
+        mode: "standard",
+        aspectRatio: selectedPreset?.aspect,
+        textStrictness: "default"
+      });
+      setPrompt(result.improvedPrompt);
+      const me = await apiGet<{ user: User }>("/api/auth/me").catch(() => null);
+      if (me) {
+        onUserUpdate(me.user);
+      }
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Prompt konnte nicht verbessert werden.");
+    } finally {
+      setImproveBusy(false);
     }
   }
 
@@ -624,16 +655,28 @@ function Studio({
             <h1>Render Pipeline</h1>
           </div>
 
-          <label className="prompt-field">
-            Prompt
+          <div className="prompt-field">
+            <div className="prompt-label-row">
+              <label htmlFor="prompt-input">Prompt</label>
+              <button
+                className="ghost-button prompt-improve-button"
+                type="button"
+                onClick={improveCurrentPrompt}
+                disabled={improveBusy || busy || prompt.trim().length < 3}
+              >
+                {improveBusy ? <Loader2 className="spin" size={17} /> : <Sparkles size={17} />}
+                {improveBusy ? "Verbessere..." : "Prompt verbessern"}
+              </button>
+            </div>
             <textarea
+              id="prompt-input"
               value={prompt}
               onChange={(event) => setPrompt(event.target.value)}
               minLength={3}
               maxLength={4000}
               required
             />
-          </label>
+          </div>
 
           <div className="size-grid">
             {config.imageSizes.map((preset) => (
