@@ -43,13 +43,108 @@ function clampScore(score: number) {
   return Math.max(0, Math.min(10, Math.round(score * 10) / 10));
 }
 
-function parseEvaluation(raw: string): ImageAgentEvaluation {
-  const parsed = JSON.parse(raw) as Partial<ImageAgentEvaluation>;
+function extractFencedJson(raw: string) {
+  const match = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  return match?.[1]?.trim() ?? null;
+}
+
+function extractBalancedJsonObject(raw: string) {
+  const start = raw.indexOf("{");
+  if (start < 0) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < raw.length; index += 1) {
+    const char = raw[index];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) continue;
+
+    if (char === "{") depth += 1;
+    if (char === "}") depth -= 1;
+    if (depth === 0) {
+      return raw.slice(start, index + 1).trim();
+    }
+  }
+
+  return null;
+}
+
+function repairJsonCandidate(candidate: string) {
+  return candidate
+    .trim()
+    .replace(/^\uFEFF/, "")
+    .replace(/[“”]/g, "\"")
+    .replace(/[‘’]/g, "'")
+    .replace(/,\s*([}\]])/g, "$1");
+}
+
+function parseJsonCandidate(candidate: string) {
+  return JSON.parse(repairJsonCandidate(candidate)) as Partial<ImageAgentEvaluation>;
+}
+
+function parseLooseEvaluation(raw: string, fallbackPrompt: string): Partial<ImageAgentEvaluation> | null {
+  const scoreMatch = raw.match(/(?:score|bewertung)\s*[:=]\s*(\d+(?:[.,]\d+)?)/i) ?? raw.match(/(\d+(?:[.,]\d+)?)\s*\/\s*10/i);
+  const score = scoreMatch ? Number(scoreMatch[1].replace(",", ".")) : NaN;
+  if (!Number.isFinite(score)) return null;
+
+  const improvedPromptMatch = raw.match(
+    /(?:improvedPrompt|improved_prompt|improved prompt|verbesserter prompt|next prompt|prompt)\s*[:=]\s*([\s\S]+)$/i
+  );
+  const rationaleMatch = raw.match(
+    /(?:rationale|reasoning|begründung|begruendung|bewertung)\s*[:=]\s*([\s\S]*?)(?=(?:improvedPrompt|improved_prompt|improved prompt|verbesserter prompt|next prompt|prompt)\s*[:=]|$)/i
+  );
+
+  return {
+    score,
+    rationale: (rationaleMatch?.[1] ?? "Bewertung wurde aus einer nicht strikt formatierten Agent-Antwort gelesen.").trim(),
+    improvedPrompt: (improvedPromptMatch?.[1] ?? fallbackPrompt).trim()
+  };
+}
+
+function parseEvaluation(raw: string, fallbackPrompt: string): ImageAgentEvaluation {
+  const candidates = [
+    raw.trim(),
+    extractFencedJson(raw),
+    extractBalancedJsonObject(raw)
+  ].filter((candidate): candidate is string => Boolean(candidate));
+
+  let parsed: Partial<ImageAgentEvaluation> | null = null;
+  for (const candidate of candidates) {
+    try {
+      parsed = parseJsonCandidate(candidate);
+      break;
+    } catch {
+      parsed = null;
+    }
+  }
+
+  parsed = parsed ?? parseLooseEvaluation(raw, fallbackPrompt);
+  if (!parsed) {
+    throw new AppError(502, "openai_agent_invalid_evaluation", "Der Agent hat keine gültige Bewertung geliefert.");
+  }
+
   const improvedPrompt = String(parsed.improvedPrompt ?? "").trim();
   const rationale = String(parsed.rationale ?? "").trim();
 
   if (!improvedPrompt || !rationale) {
-    throw new AppError(502, "openai_agent_invalid_evaluation", "Der Agent hat keine gueltige Bewertung geliefert.");
+    throw new AppError(502, "openai_agent_invalid_evaluation", "Der Agent hat keine gültige Bewertung geliefert.");
   }
 
   return {
@@ -133,12 +228,12 @@ export async function evaluateGeneratedImage(input: {
   }
 
   try {
-    return parseEvaluation(response.output_text.trim());
+    return parseEvaluation(response.output_text.trim(), input.currentPrompt);
   } catch (error) {
     if (error instanceof AppError) {
       throw error;
     }
-    throw new AppError(502, "openai_agent_invalid_evaluation", "Der Agent hat kein gueltiges JSON geliefert.");
+    throw new AppError(502, "openai_agent_invalid_evaluation", "Der Agent hat kein gültiges JSON geliefert.");
   }
 }
 
