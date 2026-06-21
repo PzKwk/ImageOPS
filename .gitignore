@@ -1,0 +1,8 @@
+node_modules/
+dist/
+vendor/
+localRTXup/
+.env
+storage/data/*.json
+storage/generated/*
+!storage/generated/.gitkeep
