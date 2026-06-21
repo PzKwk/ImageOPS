@@ -90,17 +90,96 @@ function repairJsonCandidate(candidate: string) {
   return candidate
     .trim()
     .replace(/^\uFEFF/, "")
-    .replace(/[“”]/g, "\"")
-    .replace(/[‘’]/g, "'")
+    .replace(/[\u201c\u201d]/g, "\"")
+    .replace(/[\u2018\u2019]/g, "'")
     .replace(/,\s*([}\]])/g, "$1");
 }
 
 function parseJsonCandidate(candidate: string) {
-  return JSON.parse(repairJsonCandidate(candidate)) as Partial<ImageAgentEvaluation>;
+  const parsed = JSON.parse(repairJsonCandidate(candidate)) as unknown;
+  if (Array.isArray(parsed)) {
+    return parsed.find((item) => item && typeof item === "object") as Record<string, unknown> | undefined;
+  }
+  return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : undefined;
+}
+
+function valueByAlias(record: Record<string, unknown>, aliases: string[]) {
+  const normalized = new Map(
+    Object.entries(record).map(([key, value]) => [key.replace(/[_\s-]/g, "").toLowerCase(), value])
+  );
+  return aliases
+    .map((alias) => normalized.get(alias.replace(/[_\s-]/g, "").toLowerCase()))
+    .find((value) => value !== undefined && value !== null);
+}
+
+function stringByAlias(record: Record<string, unknown>, aliases: string[]) {
+  const value = valueByAlias(record, aliases);
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number") return String(value);
+  return "";
+}
+
+function numberByAlias(record: Record<string, unknown>, aliases: string[]) {
+  const value = valueByAlias(record, aliases);
+  if (typeof value === "number") return value;
+  if (typeof value === "string") {
+    const match = value.match(/\d+(?:[.,]\d+)?/);
+    return match ? Number(match[0].replace(",", ".")) : NaN;
+  }
+  return NaN;
+}
+
+function normalizeParsedEvaluation(
+  parsed: Record<string, unknown> | undefined,
+  fallbackPrompt: string
+): Partial<ImageAgentEvaluation> | null {
+  if (!parsed) return null;
+
+  return {
+    score: numberByAlias(parsed, [
+      "score",
+      "rating",
+      "grade",
+      "scoreOutOf10",
+      "score_out_of_10",
+      "finalScore",
+      "evaluation",
+      "bewertung"
+    ]),
+    rationale: stringByAlias(parsed, [
+      "rationale",
+      "reason",
+      "reasoning",
+      "feedback",
+      "critique",
+      "analysis",
+      "comment",
+      "kommentar",
+      "begruendung",
+      "begr\u00fcndung",
+      "bewertung"
+    ]),
+    improvedPrompt:
+      stringByAlias(parsed, [
+        "improvedPrompt",
+        "improved_prompt",
+        "improvedImagePrompt",
+        "improved_image_prompt",
+        "nextPrompt",
+        "next_prompt",
+        "rewrittenPrompt",
+        "rewritten_prompt",
+        "optimizedPrompt",
+        "optimized_prompt",
+        "prompt"
+      ]) || fallbackPrompt
+  };
 }
 
 function parseLooseEvaluation(raw: string, fallbackPrompt: string): Partial<ImageAgentEvaluation> | null {
-  const scoreMatch = raw.match(/(?:score|bewertung)\s*[:=]\s*(\d+(?:[.,]\d+)?)/i) ?? raw.match(/(\d+(?:[.,]\d+)?)\s*\/\s*10/i);
+  const scoreMatch =
+    raw.match(/(?:score|rating|bewertung|overall|rate(?:d| it)?(?:\s+as)?)\D{0,24}(\d+(?:[.,]\d+)?)(?:\s*(?:\/|out of|von)\s*10)?/i) ??
+    raw.match(/(\d+(?:[.,]\d+)?)\s*(?:\/|out of|von)\s*10/i);
   const score = scoreMatch ? Number(scoreMatch[1].replace(",", ".")) : NaN;
   if (!Number.isFinite(score)) return null;
 
@@ -108,13 +187,24 @@ function parseLooseEvaluation(raw: string, fallbackPrompt: string): Partial<Imag
     /(?:improvedPrompt|improved_prompt|improved prompt|verbesserter prompt|next prompt|prompt)\s*[:=]\s*([\s\S]+)$/i
   );
   const rationaleMatch = raw.match(
-    /(?:rationale|reasoning|begründung|begruendung|bewertung)\s*[:=]\s*([\s\S]*?)(?=(?:improvedPrompt|improved_prompt|improved prompt|verbesserter prompt|next prompt|prompt)\s*[:=]|$)/i
+    /(?:rationale|reasoning|begr(?:uendung|\u00fcndung)|bewertung|feedback|critique)\s*[:=]\s*([\s\S]*?)(?=(?:improvedPrompt|improved_prompt|improved prompt|verbesserter prompt|next prompt|prompt)\s*[:=]|$)/i
   );
 
   return {
     score,
     rationale: (rationaleMatch?.[1] ?? "Bewertung wurde aus einer nicht strikt formatierten Agent-Antwort gelesen.").trim(),
     improvedPrompt: (improvedPromptMatch?.[1] ?? fallbackPrompt).trim()
+  };
+}
+
+function fallbackEvaluation(fallbackPrompt: string, raw: string): ImageAgentEvaluation {
+  const rawExcerpt = raw.trim().replace(/\s+/g, " ").slice(0, 220);
+  return {
+    score: 0,
+    rationale: rawExcerpt
+      ? `Die Agent-Bewertung war nicht strukturiert lesbar. Rohantwort: ${rawExcerpt}`
+      : "Die Agent-Bewertung war leer oder nicht lesbar. Der aktuelle Prompt wird als Fallback verwendet.",
+    improvedPrompt: fallbackPrompt
   };
 }
 
@@ -128,7 +218,7 @@ function parseEvaluation(raw: string, fallbackPrompt: string): ImageAgentEvaluat
   let parsed: Partial<ImageAgentEvaluation> | null = null;
   for (const candidate of candidates) {
     try {
-      parsed = parseJsonCandidate(candidate);
+      parsed = normalizeParsedEvaluation(parseJsonCandidate(candidate), fallbackPrompt);
       break;
     } catch {
       parsed = null;
@@ -137,15 +227,13 @@ function parseEvaluation(raw: string, fallbackPrompt: string): ImageAgentEvaluat
 
   parsed = parsed ?? parseLooseEvaluation(raw, fallbackPrompt);
   if (!parsed) {
-    throw new AppError(502, "openai_agent_invalid_evaluation", "Der Agent hat keine gültige Bewertung geliefert.");
+    return fallbackEvaluation(fallbackPrompt, raw);
   }
 
-  const improvedPrompt = String(parsed.improvedPrompt ?? "").trim();
-  const rationale = String(parsed.rationale ?? "").trim();
-
-  if (!improvedPrompt || !rationale) {
-    throw new AppError(502, "openai_agent_invalid_evaluation", "Der Agent hat keine gültige Bewertung geliefert.");
-  }
+  const improvedPrompt = String(parsed.improvedPrompt ?? fallbackPrompt).trim() || fallbackPrompt;
+  const rationale =
+    String(parsed.rationale ?? "").trim() ||
+    "Die Agent-Bewertung war unvollst\u00e4ndig. Der aktuelle Prompt wird als Fallback verwendet.";
 
   return {
     score: clampScore(Number(parsed.score)),
@@ -171,7 +259,7 @@ function buildEvaluationInput(input: {
     input.currentPrompt,
     "",
     "Task:",
-    "Score the image from 0 to 10. A 10 means the image is production-ready, faithful to the user's intent, visually coherent, and needs no prompt change. If score is below 10, return one complete improved positive prompt for the next 1080p test render. If further improvement is not likely, return the same prompt."
+    "Score the image from 0 to 10. A 10 means the image is production-ready, faithful to the user's intent, visually coherent, and needs no prompt change. If score is below 10, return one complete improved positive prompt for the next 1080p test render. If further improvement is not likely, return the same prompt. Return JSON when possible. If JSON is impossible, write plain fields: Score:, Rationale:, improvedPrompt:."
   ].join("\n");
 }
 
@@ -227,14 +315,7 @@ export async function evaluateGeneratedImage(input: {
     );
   }
 
-  try {
-    return parseEvaluation(response.output_text.trim(), input.currentPrompt);
-  } catch (error) {
-    if (error instanceof AppError) {
-      throw error;
-    }
-    throw new AppError(502, "openai_agent_invalid_evaluation", "Der Agent hat kein gültiges JSON geliefert.");
-  }
+  return parseEvaluation(response.output_text.trim(), input.currentPrompt);
 }
 
 export function imageAgentError(error: unknown) {
