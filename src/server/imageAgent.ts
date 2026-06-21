@@ -270,6 +270,32 @@ function buildEvaluationInput(input: {
   ].join("\n");
 }
 
+function buildPromptRecoveryInput(input: {
+  originalPrompt: string;
+  currentPrompt: string;
+  score: number;
+  rationale: string;
+  aspectRatio: string;
+}) {
+  return [
+    "Create one revised image-generation prompt for the next 1080p test render.",
+    `Target aspect ratio: ${input.aspectRatio}`,
+    `Previous image score: ${input.score}/10`,
+    "",
+    "Original user request:",
+    input.originalPrompt,
+    "",
+    "Prompt used for the previous render:",
+    input.currentPrompt,
+    "",
+    "Evaluator feedback:",
+    input.rationale,
+    "",
+    "Requirements:",
+    "Return only the revised prompt. Preserve the original intent and every stated requirement. Address the evaluator feedback when it contains concrete visual issues. If the feedback is missing or generic, improve fidelity to the original request, composition, subject clarity, lighting, visual hierarchy, and production readiness. Use affirmative visual language only. Keep requested text, logos, labels, or wording exact and make their placement, scale, contrast, and legibility explicit."
+  ].join("\n");
+}
+
 export async function evaluateGeneratedImage(input: {
   originalPrompt: string;
   currentPrompt: string;
@@ -323,6 +349,38 @@ export async function evaluateGeneratedImage(input: {
   }
 
   return parseEvaluation(response.output_text.trim(), input.currentPrompt);
+}
+
+export async function recoverMissingImprovedPrompt(input: {
+  originalPrompt: string;
+  currentPrompt: string;
+  score: number;
+  rationale: string;
+  aspectRatio: string;
+  userId: string;
+}) {
+  assertOpenAIConfigured();
+
+  const response = await openaiClient.responses.create({
+    model: config.openaiPromptProModel,
+    instructions:
+      "You are an expert image prompt director. Return exactly one improved prompt for the next image render, with no commentary.",
+    input: buildPromptRecoveryInput(input),
+    max_output_tokens: 1000,
+    reasoning: { effort: "medium" },
+    store: false,
+    user: input.userId
+  });
+
+  if (response.error) {
+    throw new AppError(
+      502,
+      "openai_agent_prompt_recovery_failed",
+      response.error.message ?? "Der Agent konnte keinen Ersatz-Prompt erzeugen."
+    );
+  }
+
+  return response.output_text.trim().slice(0, 4000);
 }
 
 export function imageAgentError(error: unknown) {

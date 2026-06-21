@@ -25,7 +25,12 @@ import {
   failAgentRun,
   getAgentRunForUser
 } from "./agentRuns.js";
-import { evaluateGeneratedImage, imageAgentError, type AgentAttempt } from "./imageAgent.js";
+import {
+  evaluateGeneratedImage,
+  imageAgentError,
+  recoverMissingImprovedPrompt,
+  type AgentAttempt
+} from "./imageAgent.js";
 import { assertOpenAIConfigured } from "./openaiClient.js";
 import { generateImage, imageErrorMessage } from "./openaiImage.js";
 import {
@@ -94,6 +99,27 @@ const promptImproveSchema = z.object({
 });
 
 const agentImageRequestSchema = imageRequestSchema;
+const maxAgentPromptLength = 4000;
+
+function fallbackAgentPromptRevision(input: { currentPrompt: string; rationale: string }) {
+  const feedback =
+    input.rationale &&
+    !input.rationale.includes("nicht strukturiert lesbar") &&
+    !input.rationale.includes("leer oder nicht lesbar")
+      ? ` Address this evaluator feedback: ${input.rationale}`
+      : "";
+  const refinement = [
+    "Refinement for the next render: improve fidelity to the original request, visual coherence, composition, lighting, subject clarity, detail hierarchy, and production readiness.",
+    "Preserve every requested object, style, wording, logo, label, and layout constraint exactly.",
+    "Make any requested text large enough, intentionally placed, high contrast, and clearly legible.",
+    feedback.trim()
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const baseRoom = Math.max(0, maxAgentPromptLength - refinement.length - 2);
+  const base = input.currentPrompt.trim().slice(0, baseRoom);
+  return `${base}\n\n${refinement}`.trim().slice(0, maxAgentPromptLength);
+}
 
 function imageSizeToPresetValue(size: string) {
   if (size === "3840 x 2160") return "3840x2160";
@@ -435,21 +461,41 @@ app.post(
             break;
           }
 
-          const nextPrompt = evaluation.improvedPrompt.trim();
+          let nextPrompt = evaluation.improvedPrompt.trim();
           if (evaluation.promptFallbackUsed && evaluation.score < 9) {
-            stoppedReason = "evaluation_missing_prompt";
             appendAgentRunEvent(run.id, {
               level: "warning",
               attempt,
               score: evaluation.score,
               message:
-                "Die Agent-Bewertung enthielt keinen auswertbaren verbesserten Prompt. Agent bricht vor dem Finalrender ab, damit keine weiteren Credits fuer einen Blindflug verbraucht werden."
+                "Die Agent-Bewertung enthielt keinen auswertbaren verbesserten Prompt. Agent erzeugt intern einen Ersatz-Prompt fuer den naechsten Test."
             });
-            throw new AppError(
-              502,
-              "image_agent_missing_improved_prompt",
-              "Der Agent konnte aus der Bewertung keinen verbesserten Prompt lesen. Bitte starte den Agent-Run erneut."
-            );
+            try {
+              const recoveredPrompt = await recoverMissingImprovedPrompt({
+                originalPrompt: input.prompt,
+                currentPrompt,
+                score: evaluation.score,
+                rationale: evaluation.rationale,
+                aspectRatio: testPreset.aspect,
+                userId: user.id
+              });
+              nextPrompt = recoveredPrompt || fallbackAgentPromptRevision({ currentPrompt, rationale: evaluation.rationale });
+            } catch (error) {
+              const appError = imageAgentError(error);
+              appendAgentRunEvent(run.id, {
+                level: "warning",
+                attempt,
+                score: evaluation.score,
+                message: `Ersatz-Prompt per Modell fehlgeschlagen. Agent nutzt eine konservative lokale Prompt-Ergaenzung. ${appError.message}`
+              });
+              nextPrompt = fallbackAgentPromptRevision({ currentPrompt, rationale: evaluation.rationale });
+            }
+            appendAgentRunEvent(run.id, {
+              level: "info",
+              attempt,
+              score: evaluation.score,
+              message: "Ersatz-Prompt fuer den naechsten 1080p-Test wurde erzeugt."
+            });
           }
 
           if (!nextPrompt || nextPrompt === currentPrompt.trim()) {
