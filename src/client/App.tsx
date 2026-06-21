@@ -39,6 +39,7 @@ type AuthMode = "login" | "register";
 
 const brandName = "ImageOPS";
 const productName = "ImageOPS PRO Lab";
+const logoSrc = "/logo-web.jpg";
 
 const emptyPrompt =
   "Cinematic ultra-detailed key art of a futuristic creator studio, precise lighting, premium product photography finish";
@@ -95,7 +96,7 @@ function AuthScreen({
   return (
     <main className="auth-shell">
       <section className="auth-visual" aria-label={productName}>
-        <img src="/logo.png" alt={productName} />
+        <img src={logoSrc} alt={productName} />
         <div className="auth-visual-footer">
           <span>1080p Test Render</span>
           <span>4K Max Render</span>
@@ -106,7 +107,7 @@ function AuthScreen({
 
       <section className="auth-panel">
         <div className="brand-row">
-          <img src="/logo.png" alt="" />
+          <img src={logoSrc} alt="" />
           <div>
             <strong>{productName}</strong>
             <span>{brandName} / Prompt, Referenzen, High-Quality Render</span>
@@ -596,7 +597,7 @@ function Studio({
     <div className="studio-shell">
       <header className="app-header">
         <div className="brand-row">
-          <img src="/logo.png" alt="" />
+          <img src={logoSrc} alt="" />
           <div>
             <strong>{productName}</strong>
             <span>
@@ -755,7 +756,7 @@ function Studio({
               <img src={activeJob.imageUrl} alt="Generated output" />
             ) : (
               <div className="empty-preview">
-                <img src="/logo.png" alt="" />
+                <img src={logoSrc} alt="" />
                 <strong>Bereit für dein erstes Bild</strong>
                 <span>Prompt schreiben, Format wählen und optional Referenzen hinzufügen.</span>
               </div>
