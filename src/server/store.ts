@@ -35,6 +35,14 @@ export type ImageJob = {
   referenceCount: number;
   createdAt: string;
   completedAt?: string;
+  agentScore?: number;
+  agentAttempts?: {
+    attempt: number;
+    prompt: string;
+    score: number;
+    rationale: string;
+  }[];
+  agentStopReason?: string;
 };
 
 export type PayPalOrder = {

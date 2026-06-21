@@ -1,4 +1,5 @@
 import path from "node:path";
+import fs from "node:fs/promises";
 import cors from "cors";
 import express from "express";
 import rateLimit from "express-rate-limit";
@@ -17,6 +18,7 @@ import {
 } from "./config.js";
 import { loginUser, registerUser, requireAuth, type AuthenticatedRequest } from "./auth.js";
 import { asyncHandler, errorResponse, AppError } from "./http.js";
+import { evaluateGeneratedImage, imageAgentError, type AgentAttempt } from "./imageAgent.js";
 import { assertOpenAIConfigured } from "./openaiClient.js";
 import { generateImage, imageErrorMessage } from "./openaiImage.js";
 import {
@@ -81,6 +83,8 @@ const promptImproveSchema = z.object({
   textStrictness: z.string().trim().max(80).optional()
 });
 
+const agentImageRequestSchema = imageRequestSchema;
+
 function imageSizeToPresetValue(size: string) {
   if (size === "3840 x 2160") return "3840x2160";
   if (size === "2160 x 3840") return "2160x3840";
@@ -93,6 +97,16 @@ function maxRenderValueForSource(size: string) {
   if (size === "1920 x 1080" || size === "3840 x 2160") return "3840x2160";
   if (size === "1080 x 1920" || size === "2160 x 3840") return "2160x3840";
   return null;
+}
+
+function imageAgentPresetsForSelected(size: string) {
+  const portrait = size === "1080x1920" || size === "2160x3840";
+  const testPreset = findSizePreset(portrait ? "1080x1920" : "1920x1080");
+  const finalPreset = findSizePreset(portrait ? "2160x3840" : "3840x2160");
+  if (!testPreset || !finalPreset) {
+    throw new AppError(500, "agent_presets_missing", "Agent-Presets wurden nicht gefunden.");
+  }
+  return { testPreset, finalPreset };
 }
 
 function localGeneratedPathFromUrl(url?: string) {
@@ -125,6 +139,33 @@ async function refundPromptImprove(userId: string, cost: number) {
   });
 }
 
+async function reserveAgentCredits(userId: string, cost: number) {
+  await updateStore((store) => {
+    const storedUser = store.users.find((item) => item.id === userId);
+    if (!storedUser) {
+      throw new AppError(401, "invalid_token", "Die Sitzung ist ungueltig.");
+    }
+    if (storedUser.credits < cost) {
+      throw new AppError(
+        402,
+        "insufficient_credits",
+        `Nicht genug Rob-Token Credits fuer den Agent-Run. Maximal benoetigt: ${cost} Credits.`
+      );
+    }
+    storedUser.credits -= cost;
+  });
+}
+
+async function refundAgentCredits(userId: string, cost: number) {
+  if (cost <= 0) return;
+  await updateStore((store) => {
+    const storedUser = store.users.find((item) => item.id === userId);
+    if (storedUser) {
+      storedUser.credits += cost;
+    }
+  });
+}
+
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true });
 });
@@ -132,6 +173,10 @@ app.get("/api/health", (_req, res) => {
 app.get(
   "/api/config",
   asyncHandler(async (_req, res) => {
+    const upscaler = await getUpscalerStatus();
+    const agentTestCost = findSizePreset("1920x1080")?.baseCost ?? 3;
+    const agentFinalCost = findSizePreset("3840x2160")?.baseCost ?? 15;
+    const agentUpscaleReady = upscaler.configured && upscaler.binaryFound;
     res.json({
       openaiModel: config.openaiImageModel,
       dataBackend: config.dataBackend,
@@ -155,8 +200,19 @@ app.get(
           cost: config.promptRewriteProCost
         }
       },
+      imageAgent: {
+        maxIterations: config.imageAgentMaxIterations,
+        testRenderCost: agentTestCost,
+        finalRenderCost: agentFinalCost,
+        upscaleCost: config.rtxUpscaler.upscaleCost,
+        upscalerWillRun: agentUpscaleReady,
+        maxCost:
+          config.imageAgentMaxIterations * agentTestCost +
+          agentFinalCost +
+          (agentUpscaleReady ? config.rtxUpscaler.upscaleCost : 0)
+      },
       maxUploadMb: config.maxUploadMb,
-      upscaler: await getUpscalerStatus()
+      upscaler
     });
   })
 );
@@ -224,6 +280,222 @@ app.post(
     } catch (error) {
       await refundPromptImprove(user.id, plan.cost);
       throw promptImproveError(error);
+    }
+  })
+);
+
+app.post(
+  "/api/agents/image",
+  requireAuth,
+  upload.array("images", 6),
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthenticatedRequest).user;
+    const files = (req.files ?? []) as Express.Multer.File[];
+    const parsed = agentImageRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new AppError(400, "invalid_agent_request", "Bitte gib einen Prompt mit 3 bis 4000 Zeichen ein.");
+    }
+
+    assertOpenAIConfigured();
+    const input = parsed.data;
+    if (!findSizePreset(input.size)) {
+      throw new AppError(400, "invalid_size", "Die angeforderte Bildgroesse ist nicht erlaubt.");
+    }
+
+    const { testPreset, finalPreset } = imageAgentPresetsForSelected(input.size);
+    const upscalerStatus = await getUpscalerStatus();
+    const upscalerReady = upscalerStatus.configured && upscalerStatus.binaryFound;
+    const maxCost =
+      config.imageAgentMaxIterations * testPreset.baseCost +
+      finalPreset.baseCost +
+      (upscalerReady ? config.rtxUpscaler.upscaleCost : 0);
+
+    await reserveAgentCredits(user.id, maxCost);
+
+    let actualCost = 0;
+    const attempts: AgentAttempt[] = [];
+    const warnings: string[] = ["Kosten koennen hoeher als erwartet ausfallen."];
+    let currentPrompt = input.prompt;
+    let stoppedReason = "max_iterations";
+    let refundSettled = false;
+    let best:
+      | {
+          prompt: string;
+          score: number;
+          rationale: string;
+          generated: Awaited<ReturnType<typeof generateImage>>;
+        }
+      | null = null;
+
+    try {
+      for (let attempt = 1; attempt <= config.imageAgentMaxIterations; attempt += 1) {
+        const testJobId = randomUUID();
+        actualCost += testPreset.baseCost;
+        const generated = await generateImage({
+          prompt: currentPrompt,
+          size: testPreset.value,
+          jobId: testJobId,
+          background: input.background,
+          files
+        });
+
+        const evaluation = await evaluateGeneratedImage({
+          originalPrompt: input.prompt,
+          currentPrompt,
+          imagePath: generated.pngPath,
+          attempt,
+          aspectRatio: testPreset.aspect,
+          userId: user.id
+        });
+
+        attempts.push({
+          attempt,
+          prompt: currentPrompt,
+          score: evaluation.score,
+          rationale: evaluation.rationale
+        });
+
+        if (best && evaluation.score <= best.score) {
+          stoppedReason = "score_not_improved";
+          break;
+        }
+
+        best = {
+          prompt: currentPrompt,
+          score: evaluation.score,
+          rationale: evaluation.rationale,
+          generated
+        };
+
+        if (evaluation.score >= 10) {
+          stoppedReason = "score_10";
+          break;
+        }
+
+        const nextPrompt = evaluation.improvedPrompt.trim();
+        if (!nextPrompt || nextPrompt === currentPrompt.trim()) {
+          stoppedReason = "no_prompt_change";
+          break;
+        }
+
+        currentPrompt = nextPrompt;
+      }
+
+      if (!best) {
+        throw new AppError(502, "image_agent_no_result", "Der Agent hat kein Ergebnis erzeugt.");
+      }
+      const bestResult = best;
+
+      const finalJobId = randomUUID();
+      actualCost += finalPreset.baseCost;
+      const bestBuffer = await fs.readFile(bestResult.generated.pngPath);
+      const finalGenerated = await generateImage({
+        prompt: bestResult.prompt,
+        size: finalPreset.value,
+        jobId: finalJobId,
+        background: input.background,
+        files: [
+          {
+            buffer: bestBuffer,
+            originalname: "agent-best-1080p.png",
+            mimetype: "image/png"
+          }
+        ]
+      });
+
+      let imageUrl = finalGenerated.pngUrl;
+      let imageJpgUrl = finalGenerated.jpgUrl;
+      let sourceImageUrl = finalGenerated.pngUrl;
+      let sourceImageJpgUrl = finalGenerated.jpgUrl;
+      let targetSize: string | undefined;
+      let status: "completed" | "partial" = "completed";
+      let upscaleCost = 0;
+
+      if (upscalerReady) {
+        const target = targetEightKSize(finalPreset.value);
+        if (target) {
+          actualCost += config.rtxUpscaler.upscaleCost;
+          upscaleCost = config.rtxUpscaler.upscaleCost;
+          try {
+            const upscaled = await upscaleToEightK({
+              inputPath: finalGenerated.pngPath,
+              jobId: finalJobId,
+              width: target.width,
+              height: target.height
+            });
+            imageUrl = upscaled.pngUrl;
+            imageJpgUrl = upscaled.jpgUrl;
+            targetSize = target.label;
+          } catch (error) {
+            status = "partial";
+            warnings.push(imageErrorMessage(error));
+          }
+        }
+      } else {
+        warnings.push("RTX 8K wurde uebersprungen, weil localRTXup noch nicht bereit ist.");
+      }
+
+      const refundedCredits = Math.max(0, maxCost - actualCost);
+      await refundAgentCredits(user.id, refundedCredits);
+      refundSettled = true;
+
+      const payload = await updateStore((store) => {
+        const storedUser = store.users.find((item) => item.id === user.id);
+        if (!storedUser) {
+          throw new AppError(401, "invalid_token", "Die Sitzung ist ungueltig.");
+        }
+
+        const job = {
+          id: finalJobId,
+          userId: user.id,
+          prompt: bestResult.prompt,
+          size: finalPreset.output,
+          background: input.background,
+          targetSize,
+          baseCost: actualCost - upscaleCost,
+          upscaleCost,
+          totalCost: actualCost,
+          status,
+          sourceImageUrl,
+          sourceImageJpgUrl,
+          imageUrl,
+          imageJpgUrl,
+          error: status === "partial" ? warnings[warnings.length - 1] : undefined,
+          referenceCount: 1,
+          createdAt: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+          agentScore: bestResult.score,
+          agentAttempts: attempts,
+          agentStopReason: stoppedReason
+        };
+
+        store.imageJobs.push(job);
+        return { job, user: toPublicUser(storedUser) };
+      });
+
+      warnings.push(
+        `Agent stoppte bei ${bestResult.score}/10 nach ${attempts.length} Test-Rendern.`
+      );
+
+      res.status(201).json({
+        ...payload,
+        warning: warnings.join(" "),
+        agent: {
+          attempts,
+          bestScore: bestResult.score,
+          finalPrompt: bestResult.prompt,
+          stoppedReason,
+          reservedCost: maxCost,
+          totalCost: actualCost,
+          refundedCredits,
+          maxIterations: config.imageAgentMaxIterations
+        }
+      });
+    } catch (error) {
+      if (!refundSettled) {
+        await refundAgentCredits(user.id, Math.max(0, maxCost - actualCost));
+      }
+      throw imageAgentError(error);
     }
   })
 );

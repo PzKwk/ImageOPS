@@ -133,6 +133,7 @@ export const config = {
   openaiPromptProModel: env("OPENAI_PROMPT_PRO_MODEL", "gpt-5.5-pro"),
   promptRewriteCost: envNumber("ROB_TOKEN_PROMPT_REWRITE_COST", 1),
   promptRewriteProCost: envNumber("ROB_TOKEN_PROMPT_REWRITE_PRO_COST", 5),
+  imageAgentMaxIterations: Math.min(Math.max(envNumber("IMAGE_AGENT_MAX_ITERATIONS", 5), 1), 8),
   paypalEnabled: envBoolean("PAYPAL_ENABLED", false),
   paypalEnv: env("PAYPAL_ENV", "sandbox"),
   paypalClientId: env("PAYPAL_CLIENT_ID"),

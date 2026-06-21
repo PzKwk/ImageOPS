@@ -340,6 +340,10 @@ button:disabled {
   box-shadow: none;
 }
 
+.ghost-button:disabled {
+  opacity: 0.55;
+}
+
 .primary-button.compact {
   min-height: 42px;
   padding: 0 14px;
@@ -686,6 +690,30 @@ button:disabled {
 
 .render-button {
   width: 100%;
+}
+
+.agent-run-button {
+  width: 100%;
+  min-height: 58px;
+  justify-content: flex-start;
+  padding: 9px 12px;
+  border-color: rgba(100, 210, 139, 0.34);
+  background: rgba(100, 210, 139, 0.08);
+  text-align: left;
+}
+
+.agent-run-button > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  font-weight: 800;
+}
+
+.agent-run-button small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .preview-stage {

@@ -45,6 +45,15 @@ export type PromptRewriteOption = {
   cost: number;
 };
 
+export type ImageAgentConfig = {
+  maxIterations: number;
+  testRenderCost: number;
+  finalRenderCost: number;
+  upscaleCost: number;
+  upscalerWillRun: boolean;
+  maxCost: number;
+};
+
 export type AppConfig = {
   openaiModel: string;
   dataBackend: string;
@@ -60,6 +69,7 @@ export type AppConfig = {
     thinkingExtraHard: PromptRewriteOption;
     proDefault: PromptRewriteOption;
   };
+  imageAgent: ImageAgentConfig;
   maxUploadMb: number;
   upscaler: UpscalerStatus;
 };
@@ -82,12 +92,35 @@ export type ImageJob = {
   referenceCount: number;
   createdAt: string;
   completedAt?: string;
+  agentScore?: number;
+  agentAttempts?: AgentAttempt[];
+  agentStopReason?: string;
 };
 
 export type GenerateResult = {
   job: ImageJob;
   user: User;
   warning?: string;
+};
+
+export type AgentAttempt = {
+  attempt: number;
+  prompt: string;
+  score: number;
+  rationale: string;
+};
+
+export type AgentGenerateResult = GenerateResult & {
+  agent: {
+    attempts: AgentAttempt[];
+    bestScore: number;
+    finalPrompt: string;
+    stoppedReason: string;
+    reservedCost: number;
+    totalCost: number;
+    refundedCredits: number;
+    maxIterations: number;
+  };
 };
 
 export type ImprovePromptResponse = {

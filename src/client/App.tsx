@@ -25,6 +25,7 @@ import {
   apiUpload,
   getToken,
   setToken,
+  type AgentGenerateResult,
   type AppConfig,
   type GenerateResult,
   type ImageJob,
@@ -516,6 +517,7 @@ function Studio({
   const [jobs, setJobs] = useState<ImageJob[]>([]);
   const [activeJob, setActiveJob] = useState<ImageJob | null>(null);
   const [busy, setBusy] = useState(false);
+  const [agentBusy, setAgentBusy] = useState(false);
   const [improveBusyMode, setImproveBusyMode] = useState<string | null>(null);
   const [maxRenderBusy, setMaxRenderBusy] = useState(false);
   const [upscaleBusy, setUpscaleBusy] = useState(false);
@@ -543,6 +545,7 @@ function Studio({
     activeJob?.size === "1080 x 1920"
       ? config.imageSizes.find((size) => size.value === "2160x3840")?.baseCost ?? 15
       : config.imageSizes.find((size) => size.value === "3840x2160")?.baseCost ?? 15;
+  const agentMaxCost = config.imageAgent.maxCost;
 
   useEffect(() => {
     apiGet<{ jobs: ImageJob[] }>("/api/jobs")
@@ -605,6 +608,41 @@ function Studio({
       setError(requestError instanceof Error ? requestError.message : "Prompt konnte nicht verbessert werden.");
     } finally {
       setImproveBusyMode(null);
+    }
+  }
+
+  async function runImageAgent() {
+    if (!selectedPreset) return;
+    if (prompt.trim().length < 3) {
+      setError("Bitte gib zuerst einen Prompt ein.");
+      return;
+    }
+
+    setAgentBusy(true);
+    setError("");
+    setWarning("Kosten koennen hoeher als erwartet ausfallen. Agent rendert 1080p-Tests, danach 4K und optional RTX 8K.");
+
+    const formData = new FormData();
+    formData.append("prompt", prompt);
+    formData.append("size", selectedPreset.value);
+    formData.append("background", background);
+    files.forEach((file) => formData.append("images", file));
+
+    try {
+      const result = await apiUpload<AgentGenerateResult>("/api/agents/image", formData);
+      onUserUpdate(result.user);
+      setPrompt(result.agent.finalPrompt);
+      setJobs((current) => [result.job, ...current.filter((job) => job.id !== result.job.id)]);
+      setActiveJob(result.job);
+      setWarning(
+        result.warning ??
+          `Agent Ergebnis: ${result.agent.bestScore}/10 nach ${result.agent.attempts.length} Test-Rendern.`
+      );
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Agent-Run fehlgeschlagen.");
+      setWarning("");
+    } finally {
+      setAgentBusy(false);
     }
   }
 
@@ -683,7 +721,7 @@ function Studio({
                 className="ghost-button prompt-improve-button"
                 type="button"
                 onClick={() => improveCurrentPrompt(config.promptRewrite.thinkingExtraHard.mode)}
-                disabled={Boolean(improveBusyMode) || busy || prompt.trim().length < 3}
+                disabled={Boolean(improveBusyMode) || busy || agentBusy || prompt.trim().length < 3}
               >
                 {improveBusyMode === config.promptRewrite.thinkingExtraHard.mode ? (
                   <Loader2 className="spin" size={17} />
@@ -701,7 +739,7 @@ function Studio({
                 className="ghost-button prompt-improve-button"
                 type="button"
                 onClick={() => improveCurrentPrompt(config.promptRewrite.proDefault.mode)}
-                disabled={Boolean(improveBusyMode) || busy || prompt.trim().length < 3}
+                disabled={Boolean(improveBusyMode) || busy || agentBusy || prompt.trim().length < 3}
               >
                 {improveBusyMode === config.promptRewrite.proDefault.mode ? (
                   <Loader2 className="spin" size={17} />
@@ -781,7 +819,32 @@ function Studio({
           {error ? <p className="form-error">{error}</p> : null}
           {warning ? <p className="form-warning">{warning}</p> : null}
 
-          <button className="primary-button render-button" disabled={busy || !selectedPreset}>
+          <button
+            className="ghost-button agent-run-button"
+            type="button"
+            onClick={runImageAgent}
+            disabled={
+              agentBusy ||
+              busy ||
+              maxRenderBusy ||
+              upscaleBusy ||
+              Boolean(improveBusyMode) ||
+              !selectedPreset ||
+              prompt.trim().length < 3
+            }
+          >
+            {agentBusy ? <Loader2 className="spin" size={18} /> : <Sparkles size={18} />}
+            <span>
+              {agentBusy ? "Agent optimiert..." : "Agent bis 10/10"}
+              <small>
+                Max. {creditCostLabel(agentMaxCost)} / {config.imageAgent.maxIterations} Tests a{" "}
+                {creditCostLabel(config.imageAgent.testRenderCost)} + 4K
+                {config.imageAgent.upscalerWillRun ? " + RTX 8K" : ""}
+              </small>
+            </span>
+          </button>
+
+          <button className="primary-button render-button" disabled={busy || agentBusy || !selectedPreset}>
             {busy ? <Loader2 className="spin" size={19} /> : <Rocket size={19} />}
             {busy ? "Render läuft" : "Bild generieren"}
           </button>
@@ -823,18 +886,22 @@ function Studio({
             </div>
           </div>
           <div className="preview-canvas">
-            {busy || upscaleBusy || maxRenderBusy ? (
+            {busy || agentBusy || upscaleBusy || maxRenderBusy ? (
               <div className="rendering-state">
                 <Loader2 className="spin" size={38} />
                 <strong>
-                  {upscaleBusy
+                  {agentBusy
+                    ? "Agent bewertet und optimiert"
+                    : upscaleBusy
                     ? "localRTXup erzeugt 8K"
                     : maxRenderBusy
                       ? "1080p Test wird als 4K Max neu gerendert"
                       : "High-quality Render wird erzeugt"}
                 </strong>
                 <span>
-                  {upscaleBusy
+                  {agentBusy
+                    ? "Der Server rendert 1080p-Tests, bewertet sie mit x/10 und nutzt das beste Ergebnis fuer 4K und optional 8K."
+                    : upscaleBusy
                     ? "Server schreibt input/4k.png, startet PowerShell und holt output/8k.png."
                     : maxRenderBusy
                       ? "Das 1080p Ergebnis wird als Referenz für einen neuen 4K-Render verwendet."
@@ -857,6 +924,12 @@ function Studio({
             <span>{activeJob ? `${activeJob.totalCost} Credits` : `${totalCost} Credits`}</span>
             <ChevronRight size={16} />
             <span>{activeJob?.status ?? "ready"}</span>
+            {activeJob?.agentScore !== undefined ? (
+              <>
+                <ChevronRight size={16} />
+                <span>Agent {activeJob.agentScore}/10</span>
+              </>
+            ) : null}
           </div>
           {activeJob?.imageUrl ? (
             <div className="postprocess-bar">
