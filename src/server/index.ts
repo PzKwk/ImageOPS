@@ -141,6 +141,18 @@ app.get(
       paypalCurrency: config.paypalCurrency,
       tokenPackages,
       imageSizes: imageSizePresets,
+      promptRewrite: {
+        thinkingExtraHard: {
+          mode: "thinking-extra-hard",
+          model: config.openaiPromptModel,
+          cost: config.promptRewriteCost
+        },
+        proDefault: {
+          mode: "pro-default",
+          model: config.openaiPromptProModel,
+          cost: config.promptRewriteProCost
+        }
+      },
       maxUploadMb: config.maxUploadMb,
       upscaler: await getUpscalerStatus()
     });

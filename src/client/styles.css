@@ -279,12 +279,31 @@ button:disabled {
   min-width: 0;
 }
 
+.prompt-improve-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
 .prompt-improve-button {
-  min-height: 36px;
-  padding: 0 10px;
+  min-height: 52px;
+  justify-content: flex-start;
+  padding: 8px 10px;
   font-size: 12px;
   font-weight: 800;
-  white-space: nowrap;
+  text-align: left;
+}
+
+.prompt-improve-button > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.prompt-improve-button small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.2;
 }
 
 .auth-form input:focus,
@@ -979,7 +998,8 @@ button:disabled {
   }
 
   .size-grid,
-  .auth-switch {
+  .auth-switch,
+  .prompt-improve-actions {
     grid-template-columns: 1fr;
   }
 

@@ -49,6 +49,10 @@ function formatCredits(value: number) {
   return new Intl.NumberFormat("de-DE").format(value);
 }
 
+function creditCostLabel(value: number) {
+  return `${formatCredits(value)} ${value === 1 ? "Credit" : "Credits"}`;
+}
+
 function isFourK(size: string) {
   return size === "3840x2160" || size === "2160x3840" || size === "3840 x 2160" || size === "2160 x 3840";
 }
@@ -498,7 +502,7 @@ function Studio({
   const [jobs, setJobs] = useState<ImageJob[]>([]);
   const [activeJob, setActiveJob] = useState<ImageJob | null>(null);
   const [busy, setBusy] = useState(false);
-  const [improveBusy, setImproveBusy] = useState(false);
+  const [improveBusyMode, setImproveBusyMode] = useState<string | null>(null);
   const [maxRenderBusy, setMaxRenderBusy] = useState(false);
   const [upscaleBusy, setUpscaleBusy] = useState(false);
   const [error, setError] = useState("");
@@ -561,20 +565,20 @@ function Studio({
     }
   }
 
-  async function improveCurrentPrompt() {
+  async function improveCurrentPrompt(mode: string) {
     if (prompt.trim().length < 3) {
       setError("Bitte gib zuerst einen Prompt ein.");
       return;
     }
 
-    setImproveBusy(true);
+    setImproveBusyMode(mode);
     setError("");
     setWarning("");
 
     try {
       const result = await apiPost<ImprovePromptResponse>("/api/prompts/improve", {
         prompt,
-        mode: "standard",
+        mode,
         aspectRatio: selectedPreset?.aspect,
         textStrictness: "default"
       });
@@ -586,7 +590,7 @@ function Studio({
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Prompt konnte nicht verbessert werden.");
     } finally {
-      setImproveBusy(false);
+      setImproveBusyMode(null);
     }
   }
 
@@ -658,14 +662,41 @@ function Studio({
           <div className="prompt-field">
             <div className="prompt-label-row">
               <label htmlFor="prompt-input">Prompt</label>
+            </div>
+            <div className="prompt-improve-actions">
               <button
                 className="ghost-button prompt-improve-button"
                 type="button"
-                onClick={improveCurrentPrompt}
-                disabled={improveBusy || busy || prompt.trim().length < 3}
+                onClick={() => improveCurrentPrompt(config.promptRewrite.thinkingExtraHard.mode)}
+                disabled={Boolean(improveBusyMode) || busy || prompt.trim().length < 3}
               >
-                {improveBusy ? <Loader2 className="spin" size={17} /> : <Sparkles size={17} />}
-                {improveBusy ? "Verbessere..." : "Prompt verbessern"}
+                {improveBusyMode === config.promptRewrite.thinkingExtraHard.mode ? (
+                  <Loader2 className="spin" size={17} />
+                ) : (
+                  <Sparkles size={17} />
+                )}
+                <span>
+                  {improveBusyMode === config.promptRewrite.thinkingExtraHard.mode
+                    ? "Verbessere..."
+                    : "GPT-5.5 thinking extra hard"}
+                  <small>{creditCostLabel(config.promptRewrite.thinkingExtraHard.cost)}</small>
+                </span>
+              </button>
+              <button
+                className="ghost-button prompt-improve-button"
+                type="button"
+                onClick={() => improveCurrentPrompt(config.promptRewrite.proDefault.mode)}
+                disabled={Boolean(improveBusyMode) || busy || prompt.trim().length < 3}
+              >
+                {improveBusyMode === config.promptRewrite.proDefault.mode ? (
+                  <Loader2 className="spin" size={17} />
+                ) : (
+                  <Sparkles size={17} />
+                )}
+                <span>
+                  {improveBusyMode === config.promptRewrite.proDefault.mode ? "Verbessere..." : "GPT-5.5 Pro default"}
+                  <small>{creditCostLabel(config.promptRewrite.proDefault.cost)}</small>
+                </span>
               </button>
             </div>
             <textarea

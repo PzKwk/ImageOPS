@@ -7,7 +7,7 @@ export const maxPromptImproveLength = 4000;
 const promptOptimizerSystemInstruction =
   "You are an expert image prompt director. Rewrite the user's request into a production-ready prompt for gpt-image-2. Preserve the user's intent. Add clear composition, lighting, camera/framing, materials, mood, detail level, and visual hierarchy. If the user asks for logos or text, make the text requirements explicit and keep the design readable. Do not add unrelated objects, claims, brands, celebrities, copyrighted characters, or unwanted text. Do not overhype. Output only the final improved image prompt.";
 
-type PromptImproveTier = "long" | "standard";
+type PromptImproveTier = "thinking-extra-hard" | "pro-default";
 
 export type ImprovePromptInput = {
   prompt: string;
@@ -22,26 +22,36 @@ export type PromptImprovePlan = {
   model: string;
   cost: number;
   maxOutputTokens: number;
-  reasoningEffort: "low" | "medium";
+  reasoningEffort: "medium" | "xhigh";
 };
 
 function normalizePromptImproveMode(mode?: string): PromptImproveTier {
   const normalized = mode?.trim().toLowerCase() ?? "";
-  if (["basic", "long", "sehr-lang", "very-long", "gpt-5.5"].includes(normalized)) {
-    return "long";
+  if (
+    [
+      "basic",
+      "long",
+      "sehr-lang",
+      "very-long",
+      "gpt-5.5",
+      "thinking-extra-hard",
+      "extra-hard"
+    ].includes(normalized)
+  ) {
+    return "thinking-extra-hard";
   }
-  return "standard";
+  return "pro-default";
 }
 
 export function resolvePromptImprovePlan(mode?: string): PromptImprovePlan {
   const tier = normalizePromptImproveMode(mode);
-  if (tier === "long") {
+  if (tier === "thinking-extra-hard") {
     return {
       tier,
       model: config.openaiPromptModel,
       cost: config.promptRewriteCost,
       maxOutputTokens: 1800,
-      reasoningEffort: "low"
+      reasoningEffort: "xhigh"
     };
   }
 
@@ -56,7 +66,7 @@ export function resolvePromptImprovePlan(mode?: string): PromptImprovePlan {
 
 function buildPromptImproveInput(input: ImprovePromptInput, plan: PromptImprovePlan) {
   const detailInstruction =
-    plan.tier === "long"
+    plan.tier === "thinking-extra-hard"
       ? "Rewrite as a very detailed production prompt, but keep it under 3800 characters."
       : "Rewrite as a focused standard production prompt, but keep it under 3000 characters.";
 
@@ -79,7 +89,7 @@ export async function improvePrompt(input: ImprovePromptInput) {
     instructions: promptOptimizerSystemInstruction,
     input: buildPromptImproveInput(input, plan),
     max_output_tokens: plan.maxOutputTokens,
-    reasoning: { effort: plan.reasoningEffort },
+    reasoning: { effort: plan.reasoningEffort } as never,
     store: false,
     user: input.userId
   });

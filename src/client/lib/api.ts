@@ -38,6 +38,12 @@ export type UpscalerStatus = {
   expectedOutput?: string;
 };
 
+export type PromptRewriteOption = {
+  mode: string;
+  model: string;
+  cost: number;
+};
+
 export type AppConfig = {
   openaiModel: string;
   dataBackend: string;
@@ -48,6 +54,10 @@ export type AppConfig = {
   paypalCurrency: string;
   tokenPackages: TokenPackage[];
   imageSizes: ImageSizePreset[];
+  promptRewrite: {
+    thinkingExtraHard: PromptRewriteOption;
+    proDefault: PromptRewriteOption;
+  };
   maxUploadMb: number;
   upscaler: UpscalerStatus;
 };
