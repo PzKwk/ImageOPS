@@ -287,6 +287,7 @@ function StorePanel({
       {!config.paypalEnabled ? (
         <p className="store-note">PayPal ist aktuell deaktiviert. Der Store bleibt sichtbar, aber ausgegraut.</p>
       ) : null}
+      <p className="store-note">Preise inkl. MwSt. und PayPal-Gebuehren. Credits laufen nicht ab.</p>
       <div className="credit-balance">
         <span>Verfügbar</span>
         <strong>{formatCredits(user.credits)}</strong>
@@ -303,7 +304,7 @@ function StorePanel({
           >
             <span>
               <strong>{pack.label}</strong>
-              <small>{formatCredits(pack.credits)} Credits</small>
+              <small>Einmalig {formatCredits(pack.credits)} Credits</small>
             </span>
             <span className="price">
               {pack.price} {pack.currency}
@@ -315,6 +316,19 @@ function StorePanel({
       {config.paypalEnabled && selectedPackage ? (
         <PayPalButtons config={config} selectedPackage={selectedPackage} onCaptured={handleCaptured} />
       ) : null}
+      <div className="subscription-offer">
+        <span>
+          <strong>{config.subscriptionPackage.label}</strong>
+          <small>
+            Optional: {formatCredits(config.subscriptionPackage.credits)} Credits jeden{" "}
+            {config.subscriptionPackage.interval?.toLowerCase() ?? "monat"} dazu. Bestehende Credits bleiben erhalten.
+          </small>
+        </span>
+        <span className="price">
+          {config.subscriptionPackage.price} {config.subscriptionPackage.currency}/Monat
+        </span>
+        {config.subscriptionPackage.badge ? <em>{config.subscriptionPackage.badge}</em> : null}
+      </div>
     </section>
   );
 }

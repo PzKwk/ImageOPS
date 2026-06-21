@@ -13,6 +13,7 @@ export type TokenPackage = {
   price: string;
   currency: string;
   badge?: string;
+  interval?: string;
 };
 
 export type ImageSizePreset = {
@@ -53,6 +54,7 @@ export type AppConfig = {
   paypalClientId?: string;
   paypalCurrency: string;
   tokenPackages: TokenPackage[];
+  subscriptionPackage: TokenPackage;
   imageSizes: ImageSizePreset[];
   promptRewrite: {
     thinkingExtraHard: PromptRewriteOption;

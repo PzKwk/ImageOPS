@@ -34,6 +34,17 @@ RTX 8K is only available after a 4K Max render. 1080p test renders are too small
 
 Credits are charged at job start. Failed OpenAI renders, failed 4K promotions, and failed local RTX-up runs do not automatically refund credits. Failed prompt rewrites are refunded.
 
+Store pricing:
+
+```text
+100 Credits = 9.00 EUR, wenig Verpflichtung
+400 Credits = 33.00 EUR, beliebt
+1500 Credits = 99.00 EUR, Best value
+Optionales Abo = 11.90 EUR/Monat, 250 Credits pro Monat
+```
+
+Prices include VAT and PayPal fees. Credits do not expire. The subscription is optional and only adds regular monthly credits; it is not required to use one-time packages.
+
 OpenAI render background can be selected per job:
 
 ```text

@@ -452,6 +452,7 @@ button:disabled {
 }
 
 .disabled-panel .package-row,
+.disabled-panel .subscription-offer,
 .disabled-panel .credit-balance {
   opacity: 0.62;
 }
@@ -823,7 +824,8 @@ button:disabled {
   gap: 9px;
 }
 
-.package-row {
+.package-row,
+.subscription-offer {
   position: relative;
   min-height: 70px;
   display: grid;
@@ -844,20 +846,25 @@ button:disabled {
   background: rgba(49, 168, 255, 0.12);
 }
 
-.package-row span:first-child {
+.package-row span:first-child,
+.subscription-offer span:first-child {
   display: grid;
   gap: 4px;
 }
 
-.package-row small {
+.package-row small,
+.subscription-offer small {
   color: var(--muted);
 }
 
-.package-row .price {
+.package-row .price,
+.subscription-offer .price {
   font-weight: 800;
+  white-space: nowrap;
 }
 
-.package-row em {
+.package-row em,
+.subscription-offer em {
   position: absolute;
   top: -8px;
   right: 10px;
@@ -868,6 +875,11 @@ button:disabled {
   font-size: 11px;
   font-style: normal;
   font-weight: 800;
+}
+
+.subscription-offer {
+  border-color: rgba(100, 210, 139, 0.36);
+  background: rgba(100, 210, 139, 0.08);
 }
 
 .paypal-buttons {

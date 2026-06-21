@@ -84,27 +84,39 @@ export type TokenPackage = {
 export const tokenPackages: TokenPackage[] = [
   {
     id: "starter",
-    label: "Starter",
+    label: "100 Credits",
     credits: 100,
     price: "9.00",
-    currency: env("PAYPAL_CURRENCY", "EUR")
+    currency: env("PAYPAL_CURRENCY", "EUR"),
+    badge: "Wenig Verpflichtung"
   },
   {
     id: "studio",
-    label: "Studio",
-    credits: 320,
-    price: "24.00",
+    label: "400 Credits",
+    credits: 400,
+    price: "33.00",
     currency: env("PAYPAL_CURRENCY", "EUR"),
-    badge: "Best value"
+    badge: "Beliebt"
   },
   {
     id: "production",
-    label: "Production",
-    credits: 1200,
-    price: "79.00",
-    currency: env("PAYPAL_CURRENCY", "EUR")
+    label: "1500 Credits",
+    credits: 1500,
+    price: "99.00",
+    currency: env("PAYPAL_CURRENCY", "EUR"),
+    badge: "Best value"
   }
 ];
+
+export const subscriptionPackage: TokenPackage & { interval: string } = {
+  id: "monthly-250",
+  label: "Abo",
+  credits: 250,
+  price: "11.90",
+  currency: env("PAYPAL_CURRENCY", "EUR"),
+  badge: "Monatlich",
+  interval: "Monat"
+};
 
 export const config = {
   nodeEnv: env("NODE_ENV", "development"),
