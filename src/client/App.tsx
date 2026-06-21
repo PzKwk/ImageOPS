@@ -559,7 +559,6 @@ function Studio({
 }) {
   const [prompt, setPrompt] = useState(emptyPrompt);
   const [selectedSize, setSelectedSize] = useState(config.imageSizes[0]?.value ?? "3840x2160");
-  const [background, setBackground] = useState<"opaque" | "transparent">("opaque");
   const [files, setFiles] = useState<File[]>([]);
   const [jobs, setJobs] = useState<ImageJob[]>([]);
   const [activeJob, setActiveJob] = useState<ImageJob | null>(null);
@@ -671,7 +670,7 @@ function Studio({
     const formData = new FormData();
     formData.append("prompt", prompt);
     formData.append("size", selectedPreset.value);
-    formData.append("background", background);
+    formData.append("background", "opaque");
     files.forEach((file) => formData.append("images", file));
 
     try {
@@ -733,7 +732,7 @@ function Studio({
     const formData = new FormData();
     formData.append("prompt", prompt);
     formData.append("size", selectedPreset.value);
-    formData.append("background", background);
+    formData.append("background", "opaque");
     files.forEach((file) => formData.append("images", file));
 
     try {
@@ -876,26 +875,6 @@ function Studio({
           </div>
 
           <FileDrop files={files} setFiles={setFiles} maxUploadMb={config.maxUploadMb} />
-
-          <div className="option-group">
-            <span>Background</span>
-            <div className="segmented-control">
-              <button
-                type="button"
-                className={background === "opaque" ? "active" : ""}
-                onClick={() => setBackground("opaque")}
-              >
-                Opaque
-              </button>
-              <button
-                type="button"
-                className={background === "transparent" ? "active" : ""}
-                onClick={() => setBackground("transparent")}
-              >
-                Transparent
-              </button>
-            </div>
-          </div>
 
           <div className={config.upscaler.enabled && config.upscaler.binaryFound ? "upscale-row" : "upscale-row disabled"}>
             <span>

@@ -71,7 +71,7 @@ export async function generateImage({ prompt, size, jobId, background, files }: 
     size: sizeForOpenAI,
     quality: "high",
     output_format: outputFormat,
-    background,
+    background: "opaque",
     moderation: "auto",
     n: 1
   };

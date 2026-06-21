@@ -81,7 +81,10 @@ const imageRequestSchema = z.object({
   prompt: z.string().trim().min(3).max(4000),
   size: z.string().trim(),
   background: z.enum(["opaque", "transparent"]).default("opaque")
-});
+}).transform((input) => ({
+  ...input,
+  background: "opaque" as const
+}));
 
 const promptImproveSchema = z.object({
   prompt: z.string().trim().min(3).max(maxPromptImproveLength),
