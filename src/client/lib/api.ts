@@ -123,6 +123,26 @@ export type AgentGenerateResult = GenerateResult & {
   };
 };
 
+export type AgentRunEvent = {
+  id: string;
+  at: string;
+  level: "info" | "success" | "warning" | "error";
+  message: string;
+  attempt?: number;
+  score?: number;
+  rationale?: string;
+};
+
+export type AgentRunStatus = {
+  id: string;
+  status: "queued" | "running" | "completed" | "failed";
+  createdAt: string;
+  updatedAt: string;
+  events: AgentRunEvent[];
+  result?: AgentGenerateResult;
+  error?: string;
+};
+
 export type ImprovePromptResponse = {
   improvedPrompt: string;
 };

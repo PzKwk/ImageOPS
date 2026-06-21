@@ -25,7 +25,8 @@ import {
   apiUpload,
   getToken,
   setToken,
-  type AgentGenerateResult,
+  type AgentRunEvent,
+  type AgentRunStatus,
   type AppConfig,
   type GenerateResult,
   type ImageJob,
@@ -67,6 +68,14 @@ function outputTierLabel(job: ImageJob | null) {
   if (job.targetSize) return "8K";
   if (job.size.includes("1920") || job.size.includes("1080")) return "1080p";
   return "4K";
+}
+
+function formatAgentTime(value: string) {
+  return new Intl.DateTimeFormat("de-DE", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit"
+  }).format(new Date(value));
 }
 
 function AuthScreen({
@@ -441,6 +450,44 @@ function SizeButton({
   );
 }
 
+function AgentWindow({
+  events,
+  status
+}: {
+  events: AgentRunEvent[];
+  status: AgentRunStatus["status"] | null;
+}) {
+  if (events.length === 0 && !status) return null;
+
+  return (
+    <section className="agent-window" aria-live="polite">
+      <div className="agent-window-header">
+        <span>
+          <Sparkles size={16} />
+          <strong>Agent Fenster</strong>
+        </span>
+        <em>{status ?? "bereit"}</em>
+      </div>
+      <div className="agent-log">
+        {events.length === 0 ? (
+          <article className="agent-event info">
+            <time>--:--:--</time>
+            <p>Agent wartet auf den ersten Status.</p>
+          </article>
+        ) : (
+          events.map((event) => (
+            <article className={`agent-event ${event.level}`} key={event.id}>
+              <time>{formatAgentTime(event.at)}</time>
+              <p>{event.message}</p>
+              {event.score !== undefined ? <strong>{event.score}/10</strong> : null}
+            </article>
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
 function SdkSetupPanel({
   config,
   onConfigUpdate
@@ -518,6 +565,9 @@ function Studio({
   const [activeJob, setActiveJob] = useState<ImageJob | null>(null);
   const [busy, setBusy] = useState(false);
   const [agentBusy, setAgentBusy] = useState(false);
+  const [agentRunId, setAgentRunId] = useState<string | null>(null);
+  const [agentRunStatus, setAgentRunStatus] = useState<AgentRunStatus["status"] | null>(null);
+  const [agentEvents, setAgentEvents] = useState<AgentRunEvent[]>([]);
   const [improveBusyMode, setImproveBusyMode] = useState<string | null>(null);
   const [maxRenderBusy, setMaxRenderBusy] = useState(false);
   const [upscaleBusy, setUpscaleBusy] = useState(false);
@@ -555,6 +605,61 @@ function Studio({
       })
       .catch(() => undefined);
   }, []);
+
+  const applyAgentStatus = useCallback(
+    (status: AgentRunStatus) => {
+      setAgentRunStatus(status.status);
+      setAgentEvents(status.events);
+
+      if (status.status === "completed" && status.result) {
+        onUserUpdate(status.result.user);
+        setPrompt(status.result.agent.finalPrompt);
+        setJobs((current) => [
+          status.result!.job,
+          ...current.filter((job) => job.id !== status.result!.job.id)
+        ]);
+        setActiveJob(status.result.job);
+        setWarning(
+          status.result.warning ??
+            `Agent Ergebnis: ${status.result.agent.bestScore}/10 nach ${status.result.agent.attempts.length} Test-Rendern.`
+        );
+        setAgentBusy(false);
+      }
+
+      if (status.status === "failed") {
+        setError(status.error ?? "Agent-Run fehlgeschlagen.");
+        setWarning("");
+        setAgentBusy(false);
+      }
+    },
+    [onUserUpdate]
+  );
+
+  useEffect(() => {
+    if (!agentRunId || !agentBusy) return undefined;
+
+    let cancelled = false;
+    async function pollAgentRun() {
+      try {
+        const status = await apiGet<AgentRunStatus>(`/api/agents/image/${agentRunId}`);
+        if (!cancelled) {
+          applyAgentStatus(status);
+        }
+      } catch (requestError) {
+        if (!cancelled) {
+          setError(requestError instanceof Error ? requestError.message : "Agent-Status konnte nicht geladen werden.");
+          setAgentBusy(false);
+        }
+      }
+    }
+
+    pollAgentRun();
+    const interval = window.setInterval(pollAgentRun, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [agentBusy, agentRunId, applyAgentStatus]);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -619,8 +724,11 @@ function Studio({
     }
 
     setAgentBusy(true);
+    setAgentRunId(null);
+    setAgentRunStatus("queued");
+    setAgentEvents([]);
     setError("");
-    setWarning("Kosten koennen hoeher als erwartet ausfallen. Agent rendert 1080p-Tests, danach 4K und optional RTX 8K.");
+    setWarning("Kosten können höher als erwartet ausfallen. Agent rendert 1080p-Tests, danach 4K und optional RTX 8K.");
 
     const formData = new FormData();
     formData.append("prompt", prompt);
@@ -629,19 +737,13 @@ function Studio({
     files.forEach((file) => formData.append("images", file));
 
     try {
-      const result = await apiUpload<AgentGenerateResult>("/api/agents/image", formData);
-      onUserUpdate(result.user);
-      setPrompt(result.agent.finalPrompt);
-      setJobs((current) => [result.job, ...current.filter((job) => job.id !== result.job.id)]);
-      setActiveJob(result.job);
-      setWarning(
-        result.warning ??
-          `Agent Ergebnis: ${result.agent.bestScore}/10 nach ${result.agent.attempts.length} Test-Rendern.`
-      );
+      const status = await apiUpload<AgentRunStatus>("/api/agents/image", formData);
+      setAgentRunId(status.id);
+      applyAgentStatus(status);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Agent-Run fehlgeschlagen.");
       setWarning("");
-    } finally {
+      setAgentRunStatus("failed");
       setAgentBusy(false);
     }
   }
@@ -818,6 +920,7 @@ function Studio({
 
           {error ? <p className="form-error">{error}</p> : null}
           {warning ? <p className="form-warning">{warning}</p> : null}
+          <AgentWindow events={agentEvents} status={agentRunStatus} />
 
           <button
             className="ghost-button agent-run-button"
@@ -837,7 +940,7 @@ function Studio({
             <span>
               {agentBusy ? "Agent optimiert..." : "Agent bis 10/10"}
               <small>
-                Max. {creditCostLabel(agentMaxCost)} / {config.imageAgent.maxIterations} Tests a{" "}
+                Max. {creditCostLabel(agentMaxCost)} / {config.imageAgent.maxIterations} Tests à{" "}
                 {creditCostLabel(config.imageAgent.testRenderCost)} + 4K
                 {config.imageAgent.upscalerWillRun ? " + RTX 8K" : ""}
               </small>
@@ -900,7 +1003,7 @@ function Studio({
                 </strong>
                 <span>
                   {agentBusy
-                    ? "Der Server rendert 1080p-Tests, bewertet sie mit x/10 und nutzt das beste Ergebnis fuer 4K und optional 8K."
+                    ? "Der Server rendert 1080p-Tests, bewertet sie mit x/10 und nutzt das beste Ergebnis für 4K und optional 8K."
                     : upscaleBusy
                     ? "Server schreibt input/4k.png, startet PowerShell und holt output/8k.png."
                     : maxRenderBusy

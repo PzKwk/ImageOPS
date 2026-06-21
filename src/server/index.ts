@@ -18,6 +18,13 @@ import {
 } from "./config.js";
 import { loginUser, registerUser, requireAuth, type AuthenticatedRequest } from "./auth.js";
 import { asyncHandler, errorResponse, AppError } from "./http.js";
+import {
+  appendAgentRunEvent,
+  completeAgentRun,
+  createAgentRun,
+  failAgentRun,
+  getAgentRunForUser
+} from "./agentRuns.js";
 import { evaluateGeneratedImage, imageAgentError, type AgentAttempt } from "./imageAgent.js";
 import { assertOpenAIConfigured } from "./openaiClient.js";
 import { generateImage, imageErrorMessage } from "./openaiImage.js";
@@ -284,6 +291,20 @@ app.post(
   })
 );
 
+app.get(
+  "/api/agents/image/:runId",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const user = (req as AuthenticatedRequest).user;
+    const runId = z.string().uuid().parse(req.params.runId);
+    const run = getAgentRunForUser(runId, user.id);
+    if (!run) {
+      throw new AppError(404, "agent_run_not_found", "Agent-Run wurde nicht gefunden.");
+    }
+    res.json(run);
+  })
+);
+
 app.post(
   "/api/agents/image",
   requireAuth,
@@ -312,191 +333,283 @@ app.post(
 
     await reserveAgentCredits(user.id, maxCost);
 
-    let actualCost = 0;
-    const attempts: AgentAttempt[] = [];
-    const warnings: string[] = ["Kosten koennen hoeher als erwartet ausfallen."];
-    let currentPrompt = input.prompt;
-    let stoppedReason = "max_iterations";
-    let refundSettled = false;
-    let best:
-      | {
-          prompt: string;
-          score: number;
-          rationale: string;
-          generated: Awaited<ReturnType<typeof generateImage>>;
-        }
-      | null = null;
+    const run = createAgentRun(user.id);
+    appendAgentRunEvent(run.id, {
+      level: "info",
+      message: `Agent gestartet. Maximal ${maxCost} Credits reserviert; nicht verbrauchte Credits werden erstattet.`
+    });
 
-    try {
-      for (let attempt = 1; attempt <= config.imageAgentMaxIterations; attempt += 1) {
-        const testJobId = randomUUID();
-        actualCost += testPreset.baseCost;
-        const generated = await generateImage({
-          prompt: currentPrompt,
-          size: testPreset.value,
-          jobId: testJobId,
-          background: input.background,
-          files
-        });
-
-        const evaluation = await evaluateGeneratedImage({
-          originalPrompt: input.prompt,
-          currentPrompt,
-          imagePath: generated.pngPath,
-          attempt,
-          aspectRatio: testPreset.aspect,
-          userId: user.id
-        });
-
-        attempts.push({
-          attempt,
-          prompt: currentPrompt,
-          score: evaluation.score,
-          rationale: evaluation.rationale
-        });
-
-        if (best && evaluation.score <= best.score) {
-          stoppedReason = "score_not_improved";
-          break;
-        }
-
-        best = {
-          prompt: currentPrompt,
-          score: evaluation.score,
-          rationale: evaluation.rationale,
-          generated
-        };
-
-        if (evaluation.score >= 10) {
-          stoppedReason = "score_10";
-          break;
-        }
-
-        const nextPrompt = evaluation.improvedPrompt.trim();
-        if (!nextPrompt || nextPrompt === currentPrompt.trim()) {
-          stoppedReason = "no_prompt_change";
-          break;
-        }
-
-        currentPrompt = nextPrompt;
-      }
-
-      if (!best) {
-        throw new AppError(502, "image_agent_no_result", "Der Agent hat kein Ergebnis erzeugt.");
-      }
-      const bestResult = best;
-
-      const finalJobId = randomUUID();
-      actualCost += finalPreset.baseCost;
-      const bestBuffer = await fs.readFile(bestResult.generated.pngPath);
-      const finalGenerated = await generateImage({
-        prompt: bestResult.prompt,
-        size: finalPreset.value,
-        jobId: finalJobId,
-        background: input.background,
-        files: [
-          {
-            buffer: bestBuffer,
-            originalname: "agent-best-1080p.png",
-            mimetype: "image/png"
+    void (async () => {
+      let actualCost = 0;
+      const attempts: AgentAttempt[] = [];
+      const warnings: string[] = ["Kosten können höher als erwartet ausfallen."];
+      let currentPrompt = input.prompt;
+      let stoppedReason = "max_iterations";
+      let refundSettled = false;
+      let best:
+        | {
+            prompt: string;
+            score: number;
+            rationale: string;
+            generated: Awaited<ReturnType<typeof generateImage>>;
           }
-        ]
-      });
+        | null = null;
 
-      let imageUrl = finalGenerated.pngUrl;
-      let imageJpgUrl = finalGenerated.jpgUrl;
-      let sourceImageUrl = finalGenerated.pngUrl;
-      let sourceImageJpgUrl = finalGenerated.jpgUrl;
-      let targetSize: string | undefined;
-      let status: "completed" | "partial" = "completed";
-      let upscaleCost = 0;
+      try {
+        for (let attempt = 1; attempt <= config.imageAgentMaxIterations; attempt += 1) {
+          appendAgentRunEvent(run.id, {
+            level: "info",
+            attempt,
+            message: `1080p-Test ${attempt}/${config.imageAgentMaxIterations} gestartet (${testPreset.baseCost} Credits).`
+          });
 
-      if (upscalerReady) {
-        const target = targetEightKSize(finalPreset.value);
-        if (target) {
-          actualCost += config.rtxUpscaler.upscaleCost;
-          upscaleCost = config.rtxUpscaler.upscaleCost;
-          try {
-            const upscaled = await upscaleToEightK({
-              inputPath: finalGenerated.pngPath,
-              jobId: finalJobId,
-              width: target.width,
-              height: target.height
+          const testJobId = randomUUID();
+          actualCost += testPreset.baseCost;
+          const generated = await generateImage({
+            prompt: currentPrompt,
+            size: testPreset.value,
+            jobId: testJobId,
+            background: input.background,
+            files
+          });
+
+          appendAgentRunEvent(run.id, {
+            level: "info",
+            attempt,
+            message: `1080p-Test ${attempt} gerendert. Bewertung läuft.`
+          });
+
+          const evaluation = await evaluateGeneratedImage({
+            originalPrompt: input.prompt,
+            currentPrompt,
+            imagePath: generated.pngPath,
+            attempt,
+            aspectRatio: testPreset.aspect,
+            userId: user.id
+          });
+
+          attempts.push({
+            attempt,
+            prompt: currentPrompt,
+            score: evaluation.score,
+            rationale: evaluation.rationale
+          });
+
+          appendAgentRunEvent(run.id, {
+            level: "success",
+            attempt,
+            score: evaluation.score,
+            rationale: evaluation.rationale,
+            message: `Bewertung Test ${attempt}: ${evaluation.score}/10. ${evaluation.rationale}`
+          });
+
+          if (best && evaluation.score <= best.score) {
+            stoppedReason = "score_not_improved";
+            appendAgentRunEvent(run.id, {
+              level: "warning",
+              attempt,
+              score: evaluation.score,
+              message: `Score ist nicht gestiegen (${evaluation.score}/10 nach ${best.score}/10). Agent stoppt und nutzt das bisher beste Bild.`
             });
-            imageUrl = upscaled.pngUrl;
-            imageJpgUrl = upscaled.jpgUrl;
-            targetSize = target.label;
-          } catch (error) {
-            status = "partial";
-            warnings.push(imageErrorMessage(error));
+            break;
           }
+
+          best = {
+            prompt: currentPrompt,
+            score: evaluation.score,
+            rationale: evaluation.rationale,
+            generated
+          };
+
+          if (evaluation.score >= 10) {
+            stoppedReason = "score_10";
+            appendAgentRunEvent(run.id, {
+              level: "success",
+              attempt,
+              score: evaluation.score,
+              message: "10/10 erreicht. Agent startet den finalen 4K-Render."
+            });
+            break;
+          }
+
+          const nextPrompt = evaluation.improvedPrompt.trim();
+          if (!nextPrompt || nextPrompt === currentPrompt.trim()) {
+            stoppedReason = "no_prompt_change";
+            appendAgentRunEvent(run.id, {
+              level: "warning",
+              attempt,
+              score: evaluation.score,
+              message: "Der Agent sieht keine sinnvolle Prompt-Änderung mehr. Finaler Render startet mit dem besten Prompt."
+            });
+            break;
+          }
+
+          currentPrompt = nextPrompt;
+          appendAgentRunEvent(run.id, {
+            level: "info",
+            attempt,
+            score: evaluation.score,
+            message: `Prompt für den nächsten 1080p-Test wurde aktualisiert.`
+          });
         }
-      } else {
-        warnings.push("RTX 8K wurde uebersprungen, weil localRTXup noch nicht bereit ist.");
-      }
 
-      const refundedCredits = Math.max(0, maxCost - actualCost);
-      await refundAgentCredits(user.id, refundedCredits);
-      refundSettled = true;
-
-      const payload = await updateStore((store) => {
-        const storedUser = store.users.find((item) => item.id === user.id);
-        if (!storedUser) {
-          throw new AppError(401, "invalid_token", "Die Sitzung ist ungueltig.");
+        if (!best) {
+          throw new AppError(502, "image_agent_no_result", "Der Agent hat kein Ergebnis erzeugt.");
         }
+        const bestResult = best;
 
-        const job = {
-          id: finalJobId,
-          userId: user.id,
+        appendAgentRunEvent(run.id, {
+          level: "info",
+          score: bestResult.score,
+          message: `Bestes 1080p-Ergebnis: ${bestResult.score}/10. Finaler 4K-Render startet.`
+        });
+
+        const finalJobId = randomUUID();
+        actualCost += finalPreset.baseCost;
+        const bestBuffer = await fs.readFile(bestResult.generated.pngPath);
+        const finalGenerated = await generateImage({
           prompt: bestResult.prompt,
-          size: finalPreset.output,
+          size: finalPreset.value,
+          jobId: finalJobId,
           background: input.background,
-          targetSize,
-          baseCost: actualCost - upscaleCost,
-          upscaleCost,
-          totalCost: actualCost,
-          status,
-          sourceImageUrl,
-          sourceImageJpgUrl,
-          imageUrl,
-          imageJpgUrl,
-          error: status === "partial" ? warnings[warnings.length - 1] : undefined,
-          referenceCount: 1,
-          createdAt: new Date().toISOString(),
-          completedAt: new Date().toISOString(),
-          agentScore: bestResult.score,
-          agentAttempts: attempts,
-          agentStopReason: stoppedReason
+          files: [
+            {
+              buffer: bestBuffer,
+              originalname: "agent-best-1080p.png",
+              mimetype: "image/png"
+            }
+          ]
+        });
+
+        let imageUrl = finalGenerated.pngUrl;
+        let imageJpgUrl = finalGenerated.jpgUrl;
+        const sourceImageUrl = finalGenerated.pngUrl;
+        const sourceImageJpgUrl = finalGenerated.jpgUrl;
+        let targetSize: string | undefined;
+        let status: "completed" | "partial" = "completed";
+        let upscaleCost = 0;
+
+        appendAgentRunEvent(run.id, {
+          level: "success",
+          message: "4K-Render ist fertig."
+        });
+
+        if (upscalerReady) {
+          const target = targetEightKSize(finalPreset.value);
+          if (target) {
+            actualCost += config.rtxUpscaler.upscaleCost;
+            upscaleCost = config.rtxUpscaler.upscaleCost;
+            appendAgentRunEvent(run.id, {
+              level: "info",
+              message: `localRTXup startet den 8K-Versuch (${config.rtxUpscaler.upscaleCost} Credits).`
+            });
+            try {
+              const upscaled = await upscaleToEightK({
+                inputPath: finalGenerated.pngPath,
+                jobId: finalJobId,
+                width: target.width,
+                height: target.height
+              });
+              imageUrl = upscaled.pngUrl;
+              imageJpgUrl = upscaled.jpgUrl;
+              targetSize = target.label;
+              appendAgentRunEvent(run.id, {
+                level: "success",
+                message: "RTX 8K wurde erfolgreich erzeugt."
+              });
+            } catch (error) {
+              status = "partial";
+              const upscalerMessage = imageErrorMessage(error);
+              warnings.push(upscalerMessage);
+              appendAgentRunEvent(run.id, {
+                level: "warning",
+                message: `RTX 8K ist fehlgeschlagen. Das 4K-Ergebnis bleibt verfügbar. ${upscalerMessage}`
+              });
+            }
+          }
+        } else {
+          const skippedMessage = "RTX 8K wurde übersprungen, weil localRTXup noch nicht bereit ist.";
+          warnings.push(skippedMessage);
+          appendAgentRunEvent(run.id, {
+            level: "warning",
+            message: skippedMessage
+          });
+        }
+
+        const refundedCredits = Math.max(0, maxCost - actualCost);
+        await refundAgentCredits(user.id, refundedCredits);
+        refundSettled = true;
+
+        const payload = await updateStore((store) => {
+          const storedUser = store.users.find((item) => item.id === user.id);
+          if (!storedUser) {
+            throw new AppError(401, "invalid_token", "Die Sitzung ist ungültig.");
+          }
+
+          const job = {
+            id: finalJobId,
+            userId: user.id,
+            prompt: bestResult.prompt,
+            size: finalPreset.output,
+            background: input.background,
+            targetSize,
+            baseCost: actualCost - upscaleCost,
+            upscaleCost,
+            totalCost: actualCost,
+            status,
+            sourceImageUrl,
+            sourceImageJpgUrl,
+            imageUrl,
+            imageJpgUrl,
+            error: status === "partial" ? warnings[warnings.length - 1] : undefined,
+            referenceCount: 1,
+            createdAt: new Date().toISOString(),
+            completedAt: new Date().toISOString(),
+            agentScore: bestResult.score,
+            agentAttempts: attempts,
+            agentStopReason: stoppedReason
+          };
+
+          store.imageJobs.push(job);
+          return { job, user: toPublicUser(storedUser) };
+        });
+
+        warnings.push(
+          `Agent stoppte bei ${bestResult.score}/10 nach ${attempts.length} Test-Rendern.`
+        );
+
+        const result = {
+          ...payload,
+          warning: warnings.join(" "),
+          agent: {
+            attempts,
+            bestScore: bestResult.score,
+            finalPrompt: bestResult.prompt,
+            stoppedReason,
+            reservedCost: maxCost,
+            totalCost: actualCost,
+            refundedCredits,
+            maxIterations: config.imageAgentMaxIterations
+          }
         };
 
-        store.imageJobs.push(job);
-        return { job, user: toPublicUser(storedUser) };
-      });
-
-      warnings.push(
-        `Agent stoppte bei ${bestResult.score}/10 nach ${attempts.length} Test-Rendern.`
-      );
-
-      res.status(201).json({
-        ...payload,
-        warning: warnings.join(" "),
-        agent: {
-          attempts,
-          bestScore: bestResult.score,
-          finalPrompt: bestResult.prompt,
-          stoppedReason,
-          reservedCost: maxCost,
-          totalCost: actualCost,
-          refundedCredits,
-          maxIterations: config.imageAgentMaxIterations
+        appendAgentRunEvent(run.id, {
+          level: "success",
+          score: bestResult.score,
+          message: `Agent abgeschlossen. Endbewertung: ${bestResult.score}/10. Verbraucht: ${actualCost} Credits, erstattet: ${refundedCredits} Credits.`
+        });
+        completeAgentRun(run.id, result);
+      } catch (error) {
+        if (!refundSettled) {
+          await refundAgentCredits(user.id, Math.max(0, maxCost - actualCost));
         }
-      });
-    } catch (error) {
-      if (!refundSettled) {
-        await refundAgentCredits(user.id, Math.max(0, maxCost - actualCost));
+        const appError = imageAgentError(error);
+        failAgentRun(run.id, appError.message);
       }
-      throw imageAgentError(error);
-    }
+    })();
+
+    const startedRun = getAgentRunForUser(run.id, user.id);
+    res.status(202).json(startedRun);
   })
 );
 
