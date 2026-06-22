@@ -106,7 +106,9 @@ export async function initializeLocalRtxup(directory?: string) {
     LOCAL_RTXUP_COMMAND: ".\\run.ps1",
     LOCAL_RTXUP_INPUT_FILE: config.rtxUpscaler.localRtxup.inputFile,
     LOCAL_RTXUP_OUTPUT_FILE: config.rtxUpscaler.localRtxup.outputFile,
-    LOCAL_RTXUP_POWERSHELL: "powershell.exe"
+    LOCAL_RTXUP_POWERSHELL: "powershell.exe",
+    LOCAL_RTXUP_TILE: "512",
+    LOCAL_RTXUP_OVERLAP: "32"
   });
 
   config.rtxUpscaler.enabled = true;
