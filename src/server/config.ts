@@ -79,6 +79,10 @@ export type TokenPackage = {
   price: string;
   currency: string;
   badge?: string;
+  description?: string;
+  interval?: string;
+  kind?: "one-time" | "monthly";
+  monthlyLimit?: number;
 };
 
 export const tokenPackages: TokenPackage[] = [
@@ -88,7 +92,8 @@ export const tokenPackages: TokenPackage[] = [
     credits: 100,
     price: "9.00",
     currency: env("PAYPAL_CURRENCY", "EUR"),
-    badge: "Wenig Verpflichtung"
+    badge: "Wenig Verpflichtung",
+    kind: "one-time"
   },
   {
     id: "studio",
@@ -96,7 +101,8 @@ export const tokenPackages: TokenPackage[] = [
     credits: 400,
     price: "33.00",
     currency: env("PAYPAL_CURRENCY", "EUR"),
-    badge: "Beliebt"
+    badge: "Beliebt",
+    kind: "one-time"
   },
   {
     id: "production",
@@ -104,19 +110,45 @@ export const tokenPackages: TokenPackage[] = [
     credits: 1500,
     price: "99.00",
     currency: env("PAYPAL_CURRENCY", "EUR"),
-    badge: "Best value"
+    badge: "Best value",
+    kind: "one-time"
   }
 ];
 
-export const subscriptionPackage: TokenPackage & { interval: string } = {
-  id: "monthly-250",
-  label: "Abo",
-  credits: 250,
-  price: "11.90",
-  currency: env("PAYPAL_CURRENCY", "EUR"),
-  badge: "Monatlich",
-  interval: "Monat"
-};
+export const subscriptionPackages: TokenPackage[] = [
+  {
+    id: "monthly-250",
+    label: "Abo",
+    credits: 250,
+    price: "11.90",
+    currency: env("PAYPAL_CURRENCY", "EUR"),
+    badge: "Monatlich",
+    description: "250 Credits jeden Monat, begrenzt auf 1x pro Monat.",
+    interval: "Monat",
+    kind: "monthly",
+    monthlyLimit: 1
+  },
+  {
+    id: "monthly-efficient-1250",
+    label: "Effizienz-Abo",
+    credits: 1250,
+    price: "44.90",
+    currency: env("PAYPAL_CURRENCY", "EUR"),
+    badge: "Besonders effizient",
+    description: "1250 Credits jeden Monat zum 4x Preis fuer 5x Kontingent, begrenzt auf 1x pro Monat.",
+    interval: "Monat",
+    kind: "monthly",
+    monthlyLimit: 1
+  }
+];
+
+export const subscriptionPackage = subscriptionPackages[0];
+
+export const purchasablePackages = [...tokenPackages, ...subscriptionPackages];
+
+export function findPurchasablePackage(packageId: string) {
+  return purchasablePackages.find((pack) => pack.id === packageId);
+}
 
 export const config = {
   nodeEnv: env("NODE_ENV", "development"),

@@ -942,6 +942,10 @@ button:disabled {
   gap: 9px;
 }
 
+.subscription-list {
+  margin-top: 2px;
+}
+
 .package-row,
 .subscription-offer {
   position: relative;
@@ -998,6 +1002,11 @@ button:disabled {
 .subscription-offer {
   border-color: rgba(100, 210, 139, 0.36);
   background: rgba(100, 210, 139, 0.08);
+}
+
+.subscription-offer.selected {
+  border-color: rgba(100, 210, 139, 0.66);
+  background: rgba(100, 210, 139, 0.16);
 }
 
 .paypal-buttons {

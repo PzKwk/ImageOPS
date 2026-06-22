@@ -13,6 +13,7 @@ import {
   imageSizePresets,
   isFourKSource,
   subscriptionPackage,
+  subscriptionPackages,
   targetEightKSize,
   tokenPackages
 } from "./config.js";
@@ -222,6 +223,7 @@ app.get(
       paypalClientId: config.paypalClientId,
       paypalCurrency: config.paypalCurrency,
       tokenPackages,
+      subscriptionPackages,
       subscriptionPackage,
       imageSizes: imageSizePresets,
       promptRewrite: {

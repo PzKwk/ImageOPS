@@ -277,9 +277,13 @@ function StorePanel({
   user: User;
   onUserUpdate: (user: User) => void;
 }) {
-  const [selectedId, setSelectedId] = useState(config.tokenPackages[1]?.id ?? config.tokenPackages[0]?.id);
-  const selectedPackage =
-    config.tokenPackages.find((item) => item.id === selectedId) ?? config.tokenPackages[0];
+  const subscriptionPackages =
+    config.subscriptionPackages ?? (config.subscriptionPackage ? [config.subscriptionPackage] : []);
+  const purchaseOptions = [...config.tokenPackages, ...subscriptionPackages];
+  const [selectedId, setSelectedId] = useState(
+    config.tokenPackages[1]?.id ?? config.tokenPackages[0]?.id ?? subscriptionPackages[0]?.id
+  );
+  const selectedPackage = purchaseOptions.find((item) => item.id === selectedId) ?? purchaseOptions[0];
 
   const handleCaptured = useCallback(
     (credits: number) => {
@@ -306,7 +310,7 @@ function StorePanel({
       <div className="package-list">
         {config.tokenPackages.map((pack) => (
           <button
-            className={pack.id === selectedPackage.id ? "package-row selected" : "package-row"}
+            className={pack.id === selectedPackage?.id ? "package-row selected" : "package-row"}
             key={pack.id}
             type="button"
             disabled={!config.paypalEnabled}
@@ -323,22 +327,40 @@ function StorePanel({
           </button>
         ))}
       </div>
+      {subscriptionPackages.length > 0 ? (
+        <div className="package-list subscription-list">
+          {subscriptionPackages.map((pack) => (
+            <button
+              className={
+                pack.id === selectedPackage?.id
+                  ? "package-row subscription-offer selected"
+                  : "package-row subscription-offer"
+              }
+              key={pack.id}
+              type="button"
+              disabled={!config.paypalEnabled}
+              onClick={() => setSelectedId(pack.id)}
+            >
+              <span>
+                <strong>{pack.label}</strong>
+                <small>
+                  {pack.description ??
+                    `${formatCredits(pack.credits)} Credits jeden ${
+                      pack.interval?.toLowerCase() ?? "monat"
+                    }, 1x pro Monat.`}
+                </small>
+              </span>
+              <span className="price">
+                {pack.price} {pack.currency}/{pack.interval ?? "Monat"}
+              </span>
+              {pack.badge ? <em>{pack.badge}</em> : null}
+            </button>
+          ))}
+        </div>
+      ) : null}
       {config.paypalEnabled && selectedPackage ? (
         <PayPalButtons config={config} selectedPackage={selectedPackage} onCaptured={handleCaptured} />
       ) : null}
-      <div className="subscription-offer">
-        <span>
-          <strong>{config.subscriptionPackage.label}</strong>
-          <small>
-            Optional: {formatCredits(config.subscriptionPackage.credits)} Credits jeden{" "}
-            {config.subscriptionPackage.interval?.toLowerCase() ?? "monat"} dazu. Bestehende Credits bleiben erhalten.
-          </small>
-        </span>
-        <span className="price">
-          {config.subscriptionPackage.price} {config.subscriptionPackage.currency}/Monat
-        </span>
-        {config.subscriptionPackage.badge ? <em>{config.subscriptionPackage.badge}</em> : null}
-      </div>
     </section>
   );
 }

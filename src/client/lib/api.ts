@@ -13,7 +13,10 @@ export type TokenPackage = {
   price: string;
   currency: string;
   badge?: string;
+  description?: string;
   interval?: string;
+  kind?: "one-time" | "monthly";
+  monthlyLimit?: number;
 };
 
 export type ImageSizePreset = {
@@ -63,7 +66,8 @@ export type AppConfig = {
   paypalClientId?: string;
   paypalCurrency: string;
   tokenPackages: TokenPackage[];
-  subscriptionPackage: TokenPackage;
+  subscriptionPackages: TokenPackage[];
+  subscriptionPackage?: TokenPackage;
   imageSizes: ImageSizePreset[];
   promptRewrite: {
     thinkingExtraHard: PromptRewriteOption;

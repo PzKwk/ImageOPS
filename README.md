@@ -40,7 +40,8 @@ Store pricing:
 100 Credits = 9.00 EUR, wenig Verpflichtung
 400 Credits = 33.00 EUR, beliebt
 1500 Credits = 99.00 EUR, Best value
-Optionales Abo = 11.90 EUR/Monat, 250 Credits pro Monat
+Optionales Abo = 11.90 EUR/Monat, 250 Credits, 1x pro Monat
+Effizienz-Abo = 44.90 EUR/Monat, 1250 Credits, besonders effizient, 1x pro Monat
 ```
 
 Prices include VAT and PayPal fees. Credits do not expire. The subscription is optional and only adds regular monthly credits; it is not required to use one-time packages.

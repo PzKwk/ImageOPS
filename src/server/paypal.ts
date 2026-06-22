@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { config, tokenPackages } from "./config.js";
+import { config, findPurchasablePackage, type TokenPackage } from "./config.js";
 import { AppError } from "./http.js";
-import { updateStore } from "./store.js";
+import { readStore, updateStore, type PayPalOrder } from "./store.js";
 
 function paypalBaseUrl() {
   return config.paypalEnv === "live" ? "https://api-m.paypal.com" : "https://api-m.sandbox.paypal.com";
@@ -47,11 +47,47 @@ async function getPayPalAccessToken() {
   return json.access_token;
 }
 
+function monthKey(value: string | Date) {
+  const date = value instanceof Date ? value : new Date(value);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function isCapturedInCurrentMonth(order: PayPalOrder, packageId: string) {
+  if (order.packageId !== packageId || order.status !== "captured") {
+    return false;
+  }
+
+  return monthKey(order.capturedAt ?? order.createdAt) === monthKey(new Date());
+}
+
+async function assertMonthlyPackageAvailable(userId: string, pack: TokenPackage) {
+  if (!pack.monthlyLimit) {
+    return;
+  }
+
+  const monthlyPurchases = await readStore(
+    (store) =>
+      store.paypalOrders.filter(
+        (order) => order.userId === userId && isCapturedInCurrentMonth(order, pack.id)
+      ).length
+  );
+
+  if (monthlyPurchases >= pack.monthlyLimit) {
+    throw new AppError(
+      409,
+      "monthly_package_limit_reached",
+      "Dieses Monatsangebot wurde diesen Monat bereits genutzt."
+    );
+  }
+}
+
 export async function createPayPalOrder(userId: string, packageId: string) {
-  const pack = tokenPackages.find((item) => item.id === packageId);
+  const pack = findPurchasablePackage(packageId);
   if (!pack) {
     throw new AppError(400, "invalid_package", "Unbekanntes Rob-Token-Paket.");
   }
+
+  await assertMonthlyPackageAvailable(userId, pack);
 
   const accessToken = await getPayPalAccessToken();
   const localOrderId = randomUUID();
@@ -110,6 +146,11 @@ export async function capturePayPalOrder(userId: string, paypalOrderId: string) 
     return { ...order };
   });
 
+  const pack = findPurchasablePackage(localOrder.packageId);
+  if (!pack) {
+    throw new AppError(400, "invalid_package", "Unbekanntes Rob-Token-Paket.");
+  }
+
   if (localOrder.status === "captured") {
     const user = await updateStore((store) => {
       const existing = store.users.find((item) => item.id === userId);
@@ -120,6 +161,8 @@ export async function capturePayPalOrder(userId: string, paypalOrderId: string) 
     });
     return { credits: user.credits, alreadyCaptured: true };
   }
+
+  await assertMonthlyPackageAvailable(userId, pack);
 
   const accessToken = await getPayPalAccessToken();
   const response = await fetch(`${paypalBaseUrl()}/v2/checkout/orders/${paypalOrderId}/capture`, {
